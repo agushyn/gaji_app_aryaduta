@@ -388,7 +388,61 @@ class SecurityPayrollTest extends TestCase
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
             ->component('SecurityPayroll/Index')
-            ->where('totalOvertimeAllSecurity', $expectedSum)
+            ->where('totalOvertimeAllSecurity', (int) $expectedSum)
+        );
+        $this->assertEquals($expectedSum, 1414000.0);
+    }
+
+    /**
+     * Test updating daily attendance via HTTP endpoint and syncing with summary.
+     */
+    public function test_can_update_daily_attendance_via_http(): void
+    {
+        $sec = $this->createSecurityEmployee('SEC-ATT-01', 'Security Absensi Harian');
+
+        $response = $this->actingAs($this->personalia)->post(route('payroll-security.attendance.update'), [
+            'payroll_period_id' => $this->period->id,
+            'employee_id' => $sec->id,
+            'date' => '2026-08-25',
+            'status' => 'present',
+            'work_hours' => 8,
+            'overtime_hours' => 8,
+            'note' => 'Shift lembur pengganti',
+        ]);
+
+        $response->assertRedirect();
+        $this->assertDatabaseHas('security_attendances', [
+            'payroll_period_id' => $this->period->id,
+            'employee_id' => $sec->id,
+            'date' => '2026-08-25',
+            'work_hours' => 8.0,
+            'overtime_hours' => 8.0,
+        ]);
+
+        $summary = SecurityOvertimeSummary::where('payroll_period_id', $this->period->id)
+            ->where('employee_id', $sec->id)
+            ->first();
+
+        $this->assertNotNull($summary);
+        $this->assertEquals(8.0, (float) $summary->gross_overtime_hours);
+    }
+
+    /**
+     * Test Excel export stream for Security Payroll.
+     */
+    public function test_can_export_security_payroll_excel(): void
+    {
+        $sec = $this->createSecurityEmployee('SEC-EXP-01', 'Security Export Excel');
+        $this->securityService->calculateForEmployee($sec, $this->period);
+
+        $response = $this->actingAs($this->personalia)->get(
+            route('payroll-security.periods.export-excel', $this->period->id)
+        );
+
+        $response->assertOk();
+        $this->assertTrue(
+            str_contains($response->headers->get('content-disposition'), 'Rekap_Lembur_Security_')
         );
     }
 }
+
