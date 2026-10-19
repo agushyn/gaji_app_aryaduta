@@ -68,12 +68,12 @@ export default function Dashboard({ stats, payrollStats, recentActivities, lates
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-0.5 text-xs font-semibold text-white border border-white/20">
                                     <ShieldCheck className="h-3.5 w-3.5 text-blue-200" />
-                                    Portal Personalia CV. Bina Pustaka
+                                    Portal Personalia Arya Duta Group
                                 </span>
-                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/20 px-3 py-0.5 text-xs font-semibold text-emerald-200 border border-emerald-400/30">
+                                {/* <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/20 px-3 py-0.5 text-xs font-semibold text-emerald-200 border border-emerald-400/30">
                                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
                                     Sistem Penggajian Aktif
-                                </span>
+                                </span> */}
                             </div>
 
                             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">

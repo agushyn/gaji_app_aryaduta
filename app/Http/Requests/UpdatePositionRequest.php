@@ -26,6 +26,7 @@ class UpdatePositionRequest extends FormRequest
         $this->merge([
             'name' => trim((string) $this->input('name', '')),
             'code' => $code,
+            'payroll_type' => in_array($this->input('payroll_type'), ['security', 'regular'], true) ? $this->input('payroll_type') : 'regular',
             'description' => $this->filled('description') ? trim((string) $this->input('description')) : null,
             'is_active' => $this->boolean('is_active', true),
         ]);
@@ -43,6 +44,7 @@ class UpdatePositionRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:150'],
             'code' => ['nullable', 'string', 'max:50', Rule::unique('positions', 'code')->ignore($positionId)],
+            'payroll_type' => ['nullable', 'string', 'in:regular,security'],
             'description' => ['nullable', 'string', 'max:500'],
             'is_active' => ['boolean'],
         ];

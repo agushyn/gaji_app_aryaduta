@@ -22,6 +22,7 @@ class Employee extends Model
         'department_id',
         'division_id',
         'position_id',
+        'payroll_type',
         'department',
         'position',
         'email',
@@ -249,6 +250,14 @@ class Employee extends Model
     }
 
     /**
+     * Relationship with overtime entries.
+     */
+    public function overtimeEntries(): HasMany
+    {
+        return $this->hasMany(OvertimeEntry::class);
+    }
+
+    /**
      * Check if the employee has any payslip history.
      */
     public function hasPayslipHistory(): bool
@@ -375,4 +384,86 @@ class Employee extends Model
     {
         return $query->where('employment_status', 'active');
     }
+
+    /**
+     * Get effective payroll type ('security' or 'regular').
+     * If employee explicitly has payroll_type set, it overrides position's payroll_type.
+     */
+    public function getEffectivePayrollType(): string
+    {
+        if (! empty($this->payroll_type)) {
+            return $this->payroll_type;
+        }
+
+        if ($this->relationLoaded('position') && $this->position) {
+            return $this->position->payroll_type ?? 'regular';
+        }
+
+        if ($this->position_id) {
+            $pos = Position::find($this->position_id);
+            return $pos?->payroll_type ?? 'regular';
+        }
+
+        return 'regular';
+    }
+
+    /**
+     * Check if employee is in Security payroll type.
+     */
+    public function isSecurity(): bool
+    {
+        return $this->getEffectivePayrollType() === 'security';
+    }
+
+    /**
+     * Scope for filtering security employees.
+     */
+    public function scopeSecurity(Builder $query): Builder
+    {
+        return $query->where(function (Builder $q) {
+            $q->where('employees.payroll_type', 'security')
+                ->orWhere(function (Builder $sub) {
+                    $sub->whereNull('employees.payroll_type')
+                        ->whereHas('position', function (Builder $pq) {
+                            $pq->where('payroll_type', 'security');
+                        });
+                });
+        });
+    }
+
+    /**
+     * Scope for filtering regular employees.
+     */
+    public function scopeRegular(Builder $query): Builder
+    {
+        return $query->where(function (Builder $q) {
+            $q->where('employees.payroll_type', 'regular')
+                ->orWhere(function (Builder $sub) {
+                    $sub->whereNull('employees.payroll_type')
+                        ->where(function (Builder $nested) {
+                            $nested->whereDoesntHave('position')
+                                ->orWhereHas('position', function (Builder $pq) {
+                                    $pq->where('payroll_type', '!=', 'security');
+                                });
+                        });
+                });
+        });
+    }
+
+    /**
+     * Relationship: Daily security attendances.
+     */
+    public function securityAttendances(): HasMany
+    {
+        return $this->hasMany(SecurityAttendance::class);
+    }
+
+    /**
+     * Relationship: Security overtime summaries.
+     */
+    public function securityOvertimeSummaries(): HasMany
+    {
+        return $this->hasMany(SecurityOvertimeSummary::class);
+    }
 }
+

@@ -53,6 +53,14 @@ class PayrollPeriod extends Model
     }
 
     /**
+     * Relationship with overtime entries.
+     */
+    public function overtimeEntries(): HasMany
+    {
+        return $this->hasMany(OvertimeEntry::class);
+    }
+
+    /**
      * Creator of the payroll period.
      */
     public function creator(): BelongsTo

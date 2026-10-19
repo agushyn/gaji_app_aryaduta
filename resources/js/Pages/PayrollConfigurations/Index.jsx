@@ -8,10 +8,14 @@ import {
     Calendar,
     Check,
     CheckCircle2,
+    Clock,
     Copy,
     Edit3,
     Eye,
+    Info,
     Plus,
+    RotateCcw,
+    Save,
     Search,
     Sliders,
     Sparkles,
@@ -20,15 +24,108 @@ import {
     Trash2,
     XCircle,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-export default function PayrollConfigurationsIndex({ configs, counts, filters }) {
+export default function PayrollConfigurationsIndex({
+    configs,
+    counts,
+    filters,
+    overtimeSettings,
+}) {
     const { auth } = usePage().props;
     const user = auth.user;
 
     const [search, setSearch] = useState(filters?.search || '');
     const [dayType, setDayType] = useState(filters?.day_type || '');
     const [status, setStatus] = useState(filters?.status || '');
+
+    // Overtime threshold configuration form state
+    const [workingDayThreshold, setWorkingDayThreshold] = useState(
+        overtimeSettings?.working_day_threshold ?? 3.0
+    );
+    const [holidayThreshold, setHolidayThreshold] = useState(
+        overtimeSettings?.holiday_threshold ?? 4.0
+    );
+    const [isSavingSettings, setIsSavingSettings] = useState(false);
+    const [settingsErrors, setSettingsErrors] = useState({});
+    const [settingsSuccess, setSettingsSuccess] = useState(null);
+
+    useEffect(() => {
+        if (overtimeSettings) {
+            if (overtimeSettings.working_day_threshold !== undefined) {
+                setWorkingDayThreshold(overtimeSettings.working_day_threshold);
+            }
+            if (overtimeSettings.holiday_threshold !== undefined) {
+                setHolidayThreshold(overtimeSettings.holiday_threshold);
+            }
+        }
+    }, [overtimeSettings]);
+
+    // Format minutes helper for preview simulation cards
+    const formatMinutes = (totalMinutes) => {
+        const m = Math.max(0, Math.round(totalMinutes));
+        const h = Math.floor(m / 60);
+        const rem = m % 60;
+        return `${h}:${rem.toString().padStart(2, '0')}`;
+    };
+
+    const getLiveExamples = (thresholdHours, durationPerDay) => {
+        const thresholdMin = Math.round(Number(thresholdHours || 0) * 60);
+        return [
+            {
+                time: formatMinutes(thresholdMin - 1),
+                deducted: false,
+                label: 'Tidak dipotong',
+            },
+            {
+                time: formatMinutes(thresholdMin),
+                deducted: true,
+                label: `Dipotong (${durationPerDay} jam)`,
+            },
+            {
+                time: formatMinutes(thresholdMin + 1),
+                deducted: true,
+                label: `Dipotong (${durationPerDay} jam)`,
+            },
+            {
+                time: formatMinutes(thresholdMin + 60),
+                deducted: true,
+                label: `Dipotong (${durationPerDay} jam)`,
+            },
+        ];
+    };
+
+    const handleSaveOvertimeSettings = (e) => {
+        e.preventDefault();
+        setIsSavingSettings(true);
+        setSettingsErrors({});
+        setSettingsSuccess(null);
+
+        router.post(
+            route('payroll-configurations.overtime-settings'),
+            {
+                working_day_threshold: parseFloat(workingDayThreshold),
+                holiday_threshold: parseFloat(holidayThreshold),
+            },
+            {
+                preserveScroll: true,
+                onSuccess: () => {
+                    setIsSavingSettings(false);
+                    setSettingsSuccess('Pengaturan jam lembur dan batas potongan istirahat berhasil disimpan ke database.');
+                    setTimeout(() => setSettingsSuccess(null), 5000);
+                },
+                onError: (errs) => {
+                    setIsSavingSettings(false);
+                    setSettingsErrors(errs || {});
+                },
+            }
+        );
+    };
+
+    const handleResetDefaults = () => {
+        setWorkingDayThreshold(3.0);
+        setHolidayThreshold(4.0);
+    };
 
     // Preview modal state
     const [previewItem, setPreviewItem] = useState(null);
@@ -160,6 +257,257 @@ export default function PayrollConfigurationsIndex({ configs, counts, filters })
                         <div className="text-xs text-amber-600 font-medium">Hari Libur</div>
                         <div className="text-2xl font-bold text-amber-700 mt-1">{counts.holiday}</div>
                     </div>
+                </div>
+
+                {/* Pengaturan Jam Lembur & Potongan */}
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-indigo-50/40">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div className="flex items-center space-x-3">
+                                <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-xs">
+                                    <Clock className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <div className="flex items-center space-x-2">
+                                        <h3 className="text-base font-bold text-slate-800">
+                                            Pengaturan Jam Lembur & Potongan Istirahat
+                                        </h3>
+                                        <span className="px-2 py-0.5 text-[11px] font-semibold bg-emerald-100 text-emerald-800 rounded-full">
+                                            Operator Inclusive (≥)
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-0.5">
+                                        Atur batas durasi lembur aktual minimum yang memicu potongan jam istirahat. Berlaku otomatis pada kalkulasi payroll berikutnya.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Status Pill Indicator */}
+                            <div className="flex items-center space-x-2 text-xs">
+                                <span className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-600 font-mono text-[11px]">
+                                    Hari Biasa: <strong className="text-indigo-600">≥ {workingDayThreshold} jam</strong>
+                                </span>
+                                <span className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-600 font-mono text-[11px]">
+                                    Hari Libur: <strong className="text-amber-600">≥ {holidayThreshold} jam</strong>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <form onSubmit={handleSaveOvertimeSettings} className="p-5 space-y-5">
+                        {settingsSuccess && (
+                            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center space-x-2">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <span>{settingsSuccess}</span>
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                            {/* Card 1: Lembur Hari Biasa */}
+                            <div className="rounded-xl border border-indigo-100 bg-indigo-50/20 p-4 space-y-3.5">
+                                <div className="flex items-center justify-between pb-2 border-b border-indigo-100/60">
+                                    <div className="flex items-center space-x-2">
+                                        <span className="w-2.5 h-2.5 rounded-full bg-indigo-600"></span>
+                                        <span className="text-xs font-bold uppercase tracking-wider text-indigo-900">
+                                            Lembur Hari Biasa (Hari Kerja)
+                                        </span>
+                                    </div>
+                                    <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-md">
+                                        Versi Aktif: v{overtimeSettings?.working_day_version ?? 1}
+                                    </span>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label className="block text-xs font-semibold text-slate-700">
+                                        Batas Jam Minimum untuk Potongan
+                                        <span className="text-slate-400 font-normal ml-1">(Default awal: 3.0 jam)</span>
+                                    </label>
+                                    <div className="flex items-center space-x-2">
+                                        <div className="relative flex-1">
+                                            <input
+                                                type="number"
+                                                step="0.1"
+                                                min="0.5"
+                                                max="24"
+                                                value={workingDayThreshold}
+                                                disabled={!can('payroll.configuration.update') || isSavingSettings}
+                                                onChange={(e) => setWorkingDayThreshold(e.target.value)}
+                                                className="w-full text-xs font-bold text-slate-800 rounded-lg border-slate-300 focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                                placeholder="3.0"
+                                            />
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
+                                                Jam
+                                            </span>
+                                        </div>
+                                        <span className="text-xs font-mono font-bold px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-slate-700">
+                                            = {Math.round(Number(workingDayThreshold || 0) * 60)} menit
+                                        </span>
+                                    </div>
+                                    {settingsErrors.working_day_threshold && (
+                                        <p className="text-xs text-rose-600 font-medium">
+                                            {settingsErrors.working_day_threshold}
+                                        </p>
+                                    )}
+                                </div>
+
+                                {/* Rule Info Callout */}
+                                <div className="text-[11px] text-slate-600 bg-white rounded-lg p-3 border border-indigo-100 space-y-1">
+                                    <div className="flex items-center justify-between font-semibold text-indigo-950">
+                                        <span>Ketentuan Potongan:</span>
+                                        <span className="font-mono text-indigo-600">Durasi Aktual ≥ {workingDayThreshold} Jam</span>
+                                    </div>
+                                    <div>• Nominal potongan: <strong>0.5 jam</strong> per hari lembur</div>
+                                    <div>• Jam lembur bersih: <strong>Total Jam - (Hari Lembur × 0.5 jam)</strong></div>
+                                </div>
+
+                                {/* Live Simulation Matrix */}
+                                <div className="pt-2 border-t border-indigo-100/60">
+                                    <div className="text-[11px] font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+                                        <span>Simulasi Perhitungan Aktual:</span>
+                                        <span className="text-[10px] text-slate-400">Presisi Menit Tanpa Prematur Rounding</span>
+                                    </div>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center text-xs">
+                                        {getLiveExamples(workingDayThreshold, 0.5).map((ex, idx) => (
+                                            <div
+                                                key={idx}
+                                                className={`rounded-lg p-2 border transition ${
+                                                    ex.deducted
+                                                        ? 'bg-amber-50/80 border-amber-200'
+                                                        : 'bg-white border-slate-200'
+                                                }`}
+                                            >
+                                                <div className={`font-mono font-bold ${ex.deducted ? 'text-amber-900' : 'text-slate-800'}`}>
+                                                    {ex.time}
+                                                </div>
+                                                <div className={`text-[10px] mt-0.5 ${ex.deducted ? 'text-amber-700 font-bold' : 'text-slate-500 font-medium'}`}>
+                                                    {ex.label}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Card 2: Lembur Hari Libur */}
+                            <div className="rounded-xl border border-amber-100 bg-amber-50/20 p-4 space-y-3.5">
+                                <div className="flex items-center justify-between pb-2 border-b border-amber-100/60">
+                                    <div className="flex items-center space-x-2">
+                                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                                        <span className="text-xs font-bold uppercase tracking-wider text-amber-950">
+                                            Lembur Hari Libur (Weekend / Nasional)
+                                        </span>
+                                    </div>
+                                    <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
+                                        Versi Aktif: v{overtimeSettings?.holiday_version ?? 1}
+                                    </span>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label className="block text-xs font-semibold text-slate-700">
+                                        Batas Jam Minimum untuk Potongan
+                                        <span className="text-slate-400 font-normal ml-1">(Default awal: 4.0 jam)</span>
+                                    </label>
+                                    <div className="flex items-center space-x-2">
+                                        <div className="relative flex-1">
+                                            <input
+                                                type="number"
+                                                step="0.1"
+                                                min="0.5"
+                                                max="24"
+                                                value={holidayThreshold}
+                                                disabled={!can('payroll.configuration.update') || isSavingSettings}
+                                                onChange={(e) => setHolidayThreshold(e.target.value)}
+                                                className="w-full text-xs font-bold text-slate-800 rounded-lg border-slate-300 focus:border-amber-500 focus:ring-amber-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                                placeholder="4.0"
+                                            />
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
+                                                Jam
+                                            </span>
+                                        </div>
+                                        <span className="text-xs font-mono font-bold px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-slate-700">
+                                            = {Math.round(Number(holidayThreshold || 0) * 60)} menit
+                                        </span>
+                                    </div>
+                                    {settingsErrors.holiday_threshold && (
+                                        <p className="text-xs text-rose-600 font-medium">
+                                            {settingsErrors.holiday_threshold}
+                                        </p>
+                                    )}
+                                </div>
+
+                                {/* Rule Info Callout */}
+                                <div className="text-[11px] text-slate-600 bg-white rounded-lg p-3 border border-amber-100 space-y-1">
+                                    <div className="flex items-center justify-between font-semibold text-amber-950">
+                                        <span>Ketentuan Potongan:</span>
+                                        <span className="font-mono text-amber-700">Durasi Aktual ≥ {holidayThreshold} Jam</span>
+                                    </div>
+                                    <div>• Nominal potongan: <strong>1.0 jam</strong> per hari lembur</div>
+                                    <div>• Jam lembur bersih: <strong>Total Jam - (Hari Lembur × 1.0 jam)</strong></div>
+                                </div>
+
+                                {/* Live Simulation Matrix */}
+                                <div className="pt-2 border-t border-amber-100/60">
+                                    <div className="text-[11px] font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+                                        <span>Simulasi Perhitungan Aktual:</span>
+                                        <span className="text-[10px] text-slate-400">Presisi Menit Tanpa Prematur Rounding</span>
+                                    </div>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center text-xs">
+                                        {getLiveExamples(holidayThreshold, 1.0).map((ex, idx) => (
+                                            <div
+                                                key={idx}
+                                                className={`rounded-lg p-2 border transition ${
+                                                    ex.deducted
+                                                        ? 'bg-amber-50/80 border-amber-200'
+                                                        : 'bg-white border-slate-200'
+                                                }`}
+                                            >
+                                                <div className={`font-mono font-bold ${ex.deducted ? 'text-amber-900' : 'text-slate-800'}`}>
+                                                    {ex.time}
+                                                </div>
+                                                <div className={`text-[10px] mt-0.5 ${ex.deducted ? 'text-amber-700 font-bold' : 'text-slate-500 font-medium'}`}>
+                                                    {ex.label}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Action Bar */}
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-100">
+                            <div className="flex items-center space-x-2 text-xs text-slate-500">
+                                <Info className="w-4 h-4 text-slate-400 shrink-0" />
+                                <span>Nilai tersimpan di database dan langsung berlaku pada kalkulasi & slip gaji berikutnya.</span>
+                            </div>
+
+                            {can('payroll.configuration.update') ? (
+                                <div className="flex items-center space-x-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleResetDefaults}
+                                        disabled={isSavingSettings}
+                                        className="inline-flex items-center px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition disabled:opacity-50"
+                                    >
+                                        <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                                        Reset Default
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={isSavingSettings}
+                                        className="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition disabled:opacity-50"
+                                    >
+                                        <Save className="w-3.5 h-3.5 mr-1.5" />
+                                        {isSavingSettings ? 'Menyimpan...' : 'Simpan Pengaturan Lembur'}
+                                    </button>
+                                </div>
+                            ) : (
+                                <span className="text-xs text-slate-400 italic">
+                                    Hanya personalia/admin dengan hak akses edit yang dapat mengubah pengaturan ini.
+                                </span>
+                            )}
+                        </div>
+                    </form>
                 </div>
 
                 {/* Filters */}
@@ -406,67 +754,43 @@ export default function PayrollConfigurationsIndex({ configs, counts, filters })
                     <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-4 space-y-2">
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-bold uppercase tracking-wider text-blue-900">
-                                {previewItem?.day_type === 'holiday' || previewItem?.day_type === 'national_holiday' || previewItem?.day_type === 'joint_leave'
-                                    ? 'Ketentuan Lembur Hari Libur'
-                                    : 'Ketentuan Lembur Hari Biasa'}
+                                {previewItem?.preview_details?.title || (previewItem?.day_type === 'holiday'
+                                    ? 'LEMBUR HARI LIBUR'
+                                    : 'LEMBUR HARI BIASA')}
                             </span>
                             <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-blue-600 text-white">
-                                {previewItem?.day_type === 'holiday' || previewItem?.day_type === 'national_holiday' || previewItem?.day_type === 'joint_leave'
-                                    ? 'Threshold ≥ 4.0 jam (≥ 240 mnt)'
-                                    : 'Threshold ≥ 3.0 jam (≥ 180 mnt)'}
+                                Threshold ≥ {previewItem?.preview_details?.threshold_hours ?? (previewItem?.day_type === 'holiday' ? 4 : 3)} jam (≥ {previewItem?.preview_details?.threshold_minutes ?? (previewItem?.day_type === 'holiday' ? 240 : 180)} mnt)
                             </span>
                         </div>
                         <p className="text-xs text-blue-900 font-medium">
-                            {previewItem?.day_type === 'holiday' || previewItem?.day_type === 'national_holiday' || previewItem?.day_type === 'joint_leave'
-                                ? 'Potongan istirahat mulai berlaku pada lembur ≥ 4 jam (≥ 240 menit). Besar potongan: Jumlah Hari Lembur × 1.0 jam.'
-                                : 'Potongan istirahat mulai berlaku pada lembur ≥ 3 jam (≥ 180 menit). Besar potongan: Jumlah Hari Lembur × 0.5 jam.'}
+                            {previewItem?.preview_details?.rule_description || 'Potongan istirahat mulai berlaku pada lembur ≥ threshold.'}
+                            {' '}Besar potongan: Jumlah Hari Lembur × {previewItem?.preview_details?.duration_per_day ?? (previewItem?.day_type === 'holiday' ? 1.0 : 0.5)} jam.
                         </p>
 
                         {/* Contoh Pengujian Threshold */}
                         <div className="mt-2 pt-2 border-t border-blue-200/60">
-                            <div className="text-[11px] font-semibold text-blue-800 mb-1.5">
-                                Contoh Pengujian Durasi Lembur:
+                            <div className="text-[11px] font-semibold text-blue-800 mb-1.5 flex items-center justify-between">
+                                <span>Contoh Pengujian Durasi Lembur (Kalkulasi Engine):</span>
+                                <span className="text-[10px] text-blue-600 font-mono">Operator: ≥ (Inclusive)</span>
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
-                                {previewItem?.day_type === 'holiday' || previewItem?.day_type === 'national_holiday' || previewItem?.day_type === 'joint_leave' ? (
-                                    <>
-                                        <div className="bg-white rounded-lg p-2 border border-blue-200 shadow-xs">
-                                            <div className="font-mono font-bold text-slate-800">3:59</div>
-                                            <div className="text-[11px] text-slate-500 font-medium mt-0.5">Tidak dipotong</div>
+                                {(previewItem?.preview_details?.examples || []).map((ex, idx) => (
+                                    <div
+                                        key={idx}
+                                        className={`rounded-lg p-2 border shadow-xs ${
+                                            ex.deducted
+                                                ? 'bg-amber-50 border-amber-200'
+                                                : 'bg-white border-blue-200'
+                                        }`}
+                                    >
+                                        <div className={`font-mono font-bold ${ex.deducted ? 'text-amber-900' : 'text-slate-800'}`}>
+                                            {ex.time}
                                         </div>
-                                        <div className="bg-amber-50 rounded-lg p-2 border border-amber-200 shadow-xs">
-                                            <div className="font-mono font-bold text-amber-900">4:00</div>
-                                            <div className="text-[11px] text-amber-700 font-bold mt-0.5">Dipotong (YA)</div>
+                                        <div className={`text-[11px] mt-0.5 ${ex.deducted ? 'text-amber-700 font-bold' : 'text-slate-500 font-medium'}`}>
+                                            {ex.label} {ex.deducted && ex.deduction ? `(${ex.deduction} jam)` : ''}
                                         </div>
-                                        <div className="bg-amber-50 rounded-lg p-2 border border-amber-200 shadow-xs">
-                                            <div className="font-mono font-bold text-amber-900">4:01</div>
-                                            <div className="text-[11px] text-amber-700 font-bold mt-0.5">Dipotong (YA)</div>
-                                        </div>
-                                        <div className="bg-amber-50 rounded-lg p-2 border border-amber-200 shadow-xs">
-                                            <div className="font-mono font-bold text-amber-900">5:00</div>
-                                            <div className="text-[11px] text-amber-700 font-bold mt-0.5">Dipotong (YA)</div>
-                                        </div>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div className="bg-white rounded-lg p-2 border border-blue-200 shadow-xs">
-                                            <div className="font-mono font-bold text-slate-800">2:59</div>
-                                            <div className="text-[11px] text-slate-500 font-medium mt-0.5">Tidak dipotong</div>
-                                        </div>
-                                        <div className="bg-amber-50 rounded-lg p-2 border border-amber-200 shadow-xs">
-                                            <div className="font-mono font-bold text-amber-900">3:00</div>
-                                            <div className="text-[11px] text-amber-700 font-bold mt-0.5">Dipotong (YA)</div>
-                                        </div>
-                                        <div className="bg-amber-50 rounded-lg p-2 border border-amber-200 shadow-xs">
-                                            <div className="font-mono font-bold text-amber-900">3:01</div>
-                                            <div className="text-[11px] text-amber-700 font-bold mt-0.5">Dipotong (YA)</div>
-                                        </div>
-                                        <div className="bg-amber-50 rounded-lg p-2 border border-amber-200 shadow-xs">
-                                            <div className="font-mono font-bold text-amber-900">4:00</div>
-                                            <div className="text-[11px] text-amber-700 font-bold mt-0.5">Dipotong (YA)</div>
-                                        </div>
-                                    </>
-                                )}
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     </div>

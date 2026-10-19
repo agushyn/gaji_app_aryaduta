@@ -259,20 +259,35 @@ class FormulaEvaluatorService
 
         // Preset detection for common Two-Stage Overtime (Lembur Hari Biasa)
         if ($this->isTwoStageOvertimeFormula($formula) || $dayType === 'working_day') {
-            $threshold = isset($formula['break_threshold']) ? (float) $formula['break_threshold'] : 3.0;
-            $duration = isset($formula['break_duration_per_day']) ? (float) $formula['break_duration_per_day'] : 0.5;
+            $threshold = isset($formula['break_threshold']) && is_numeric($formula['break_threshold'])
+                ? (float) $formula['break_threshold']
+                : 3.0;
+            $duration = isset($formula['break_duration_per_day']) && is_numeric($formula['break_duration_per_day'])
+                ? (float) $formula['break_duration_per_day']
+                : 0.5;
             $thresholdMin = (int) round($threshold * 60);
             $thresholdDisplay = ($threshold == (int) $threshold) ? (int) $threshold : $threshold;
 
             $firstMult = $this->extractMultiplier($operands[0] ?? [], 1.5);
             $subMult = $this->extractMultiplier($operands[1] ?? [], 2.0);
 
+            $formatMinutes = function (int $m): string {
+                $h = intdiv($m, 60);
+                $rem = $m % 60;
+                return sprintf('%d:%02d', $h, $rem);
+            };
+
+            $tMinus1 = $formatMinutes(max($thresholdMin - 1, 0));
+            $tExact = $formatMinutes($thresholdMin);
+            $tPlus1 = $formatMinutes($thresholdMin + 1);
+            $tLater = $formatMinutes($thresholdMin + 60);
+
             return "LEMBUR HARI BIASA\n\n" .
                    "Potongan mulai berlaku pada lembur ≥ {$thresholdDisplay} jam.\n\n" .
-                   "2:59  → Tidak dipotong\n" .
-                   "3:00  → Dipotong\n" .
-                   "3:01  → Dipotong\n" .
-                   "4:00  → Dipotong\n\n" .
+                   "{$tMinus1}  → Tidak dipotong\n" .
+                   "{$tExact}  → Dipotong\n" .
+                   "{$tPlus1}  → Dipotong\n" .
+                   "{$tLater}  → Dipotong\n\n" .
                    "Kriteria Teknis: overtime_minutes >= {$thresholdMin} (potongan = {$duration} jam per hari lembur)\n\n" .
                    "Rumus Perhitungan:\n" .
                    "Jam Pertama + Jam Berikutnya\n" .
@@ -282,19 +297,34 @@ class FormulaEvaluatorService
 
         // Preset detection for Holiday Overtime (Lembur Hari Libur)
         if ($this->isHolidayOvertimeFormula($formula) || in_array($dayType, ['holiday', 'national_holiday', 'joint_leave', 'weekend'], true)) {
-            $threshold = isset($formula['break_threshold']) ? (float) $formula['break_threshold'] : 4.0;
-            $duration = isset($formula['break_duration_per_day']) ? (float) $formula['break_duration_per_day'] : 1.0;
+            $threshold = isset($formula['break_threshold']) && is_numeric($formula['break_threshold'])
+                ? (float) $formula['break_threshold']
+                : 4.0;
+            $duration = isset($formula['break_duration_per_day']) && is_numeric($formula['break_duration_per_day'])
+                ? (float) $formula['break_duration_per_day']
+                : 1.0;
             $thresholdMin = (int) round($threshold * 60);
             $thresholdDisplay = ($threshold == (int) $threshold) ? (int) $threshold : $threshold;
 
             $mult = $this->extractMultiplier($formula, 2.0);
 
+            $formatMinutes = function (int $m): string {
+                $h = intdiv($m, 60);
+                $rem = $m % 60;
+                return sprintf('%d:%02d', $h, $rem);
+            };
+
+            $tMinus1 = $formatMinutes(max($thresholdMin - 1, 0));
+            $tExact = $formatMinutes($thresholdMin);
+            $tPlus1 = $formatMinutes($thresholdMin + 1);
+            $tLater = $formatMinutes($thresholdMin + 60);
+
             return "LEMBUR HARI LIBUR\n\n" .
                    "Potongan mulai berlaku pada lembur ≥ {$thresholdDisplay} jam.\n\n" .
-                   "3:59  → Tidak dipotong\n" .
-                   "4:00  → Dipotong\n" .
-                   "4:01  → Dipotong\n" .
-                   "5:00  → Dipotong\n\n" .
+                   "{$tMinus1}  → Tidak dipotong\n" .
+                   "{$tExact}  → Dipotong\n" .
+                   "{$tPlus1}  → Dipotong\n" .
+                   "{$tLater}  → Dipotong\n\n" .
                    "Kriteria Teknis: overtime_minutes >= {$thresholdMin} (potongan = {$duration} jam per hari lembur)\n\n" .
                    "Rumus Perhitungan:\n" .
                    "Total Jam Lembur Bersih × Upah Lembur Karyawan × {$mult}";

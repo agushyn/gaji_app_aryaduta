@@ -122,6 +122,11 @@ class RbacSeeder extends Seeder
             ['name' => 'payroll.holiday.view', 'label' => 'Melihat Kalender Libur Payroll', 'group' => 'payroll-holiday'],
             ['name' => 'payroll.holiday.sync', 'label' => 'Sinkronisasi Kalender Libur Payroll', 'group' => 'payroll-holiday'],
             ['name' => 'payroll.holiday.update', 'label' => 'Mengubah Kalender Libur Payroll', 'group' => 'payroll-holiday'],
+
+            // Security Payroll Module
+            ['name' => 'payroll.security.view', 'label' => 'Melihat Payroll & Rekap Security', 'group' => 'payroll-security'],
+            ['name' => 'payroll.security.manage', 'label' => 'Mengelola Payroll & Rekap Kehadiran Security', 'group' => 'payroll-security'],
+            ['name' => 'payroll.security.config', 'label' => 'Mengubah Konfigurasi Rumus Lembur Security', 'group' => 'payroll-security'],
         ];
 
         $allPermissionIds = [];
@@ -154,6 +159,7 @@ class RbacSeeder extends Seeder
             'reports.view', 'reports.export',
             'payroll.configuration.view', 'payroll.configuration.create', 'payroll.configuration.update',
             'payroll.holiday.view', 'payroll.holiday.sync', 'payroll.holiday.update',
+            'payroll.security.view', 'payroll.security.manage', 'payroll.security.config',
         ];
         $roles['personalia']->permissions()->sync(
             array_intersect_key($permissionModelMap, array_flip($personaliaPermNames))
@@ -167,6 +173,7 @@ class RbacSeeder extends Seeder
             'reports.view',
             'payroll.configuration.view',
             'payroll.holiday.view',
+            'payroll.security.view',
         ];
         $roles['approver']->permissions()->sync(
             array_intersect_key($permissionModelMap, array_flip($approverPermNames))
@@ -189,6 +196,7 @@ class RbacSeeder extends Seeder
             'audit-logs.view',
             'payroll.configuration.view',
             'payroll.holiday.view',
+            'payroll.security.view',
         ];
         $roles['auditor']->permissions()->sync(
             array_intersect_key($permissionModelMap, array_flip($auditorPermNames))

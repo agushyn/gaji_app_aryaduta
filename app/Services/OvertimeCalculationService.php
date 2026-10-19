@@ -335,8 +335,13 @@ class OvertimeCalculationService
             ->forDayType('holiday')
             ->first();
 
-        $workingFormula = $workingConfig?->currentVersionRecord?->formula ?? $this->getDefaultWorkingDayFormula();
-        $holidayFormula = $holidayConfig?->currentVersionRecord?->formula ?? $this->getDefaultHolidayFormula();
+        $workingFormula = (is_array($workingConfig?->currentVersionRecord?->formula) && ! empty($workingConfig->currentVersionRecord->formula))
+            ? $workingConfig->currentVersionRecord->formula
+            : $this->getDefaultWorkingDayFormula();
+
+        $holidayFormula = (is_array($holidayConfig?->currentVersionRecord?->formula) && ! empty($holidayConfig->currentVersionRecord->formula))
+            ? $holidayConfig->currentVersionRecord->formula
+            : $this->getDefaultHolidayFormula();
 
         // Configurable break parameters from active config or params
         $workingThreshold = isset($params['working_break_threshold'])
@@ -521,17 +526,29 @@ class OvertimeCalculationService
         $title = $isHoliday ? 'LEMBUR HARI LIBUR' : 'LEMBUR HARI BIASA';
         $ruleDescription = "Potongan mulai berlaku pada lembur ≥ {$thresholdDisplay} jam.";
 
-        $examples = $isHoliday ? [
-            ['time' => '3:59', 'deducted' => false, 'label' => 'Tidak dipotong'],
-            ['time' => '4:00', 'deducted' => true, 'label' => 'Dipotong'],
-            ['time' => '4:01', 'deducted' => true, 'label' => 'Dipotong'],
-            ['time' => '5:00', 'deducted' => true, 'label' => 'Dipotong'],
-        ] : [
-            ['time' => '2:59', 'deducted' => false, 'label' => 'Tidak dipotong'],
-            ['time' => '3:00', 'deducted' => true, 'label' => 'Dipotong'],
-            ['time' => '3:01', 'deducted' => true, 'label' => 'Dipotong'],
-            ['time' => '4:00', 'deducted' => true, 'label' => 'Dipotong'],
-        ];
+        $formatMinutes = function (int $m): string {
+            $h = intdiv($m, 60);
+            $rem = $m % 60;
+            return sprintf('%d:%02d', $h, $rem);
+        };
+
+        $tMinus1 = $formatMinutes(max($thresholdMinutes - 1, 0));
+        $tExact = $formatMinutes($thresholdMinutes);
+        $tPlus1 = $formatMinutes($thresholdMinutes + 1);
+        $tLater = $formatMinutes($thresholdMinutes + 60);
+
+        $sampleTimes = [$tMinus1, $tExact, $tPlus1, $tLater];
+        $examples = [];
+        foreach ($sampleTimes as $timeStr) {
+            $calc = $this->calculateBreakDeduction($timeStr, 1.0, $dayType, $threshold, $durationPerDay);
+            $examples[] = [
+                'time' => $timeStr,
+                'deducted' => $calc['is_deducted'],
+                'label' => $calc['is_deducted'] ? 'Dipotong' : 'Tidak dipotong',
+                'deduction' => $calc['deduction'],
+                'net_hours' => $calc['net_hours'],
+            ];
+        }
 
         $text = $this->formulaEvaluator->toHumanReadable($formula, $dayType);
 
@@ -543,8 +560,150 @@ class OvertimeCalculationService
             'threshold_minutes' => $thresholdMinutes,
             'duration_per_day' => $durationPerDay,
             'rule_description' => $ruleDescription,
+            'operator' => '>=',
             'text' => $text,
             'examples' => $examples,
         ];
     }
+
+    /**
+     * Compute comprehensive overtime recap for an employee and their entries in a period.
+     * Separates gross hours, break deductions, gross pay, deduction nominals, and net pay.
+     *
+     * @param  \Illuminate\Support\Collection|array  $entries
+     * @return array<string, mixed>
+     */
+    public function calculateEmployeeOvertimeRecap(Employee $employee, mixed $entries): array
+    {
+        $entriesList = is_array($entries) ? $entries : $entries->all();
+
+        $wdMinutes = 0;
+        $wdDates = [];
+        $hlMinutes = 0;
+        $hlDates = [];
+
+        foreach ($entriesList as $entry) {
+            $dayType = is_array($entry) ? ($entry['day_type'] ?? 'working_day') : $entry->day_type;
+            $durationMin = is_array($entry) ? ($entry['duration_minutes'] ?? 0) : $entry->duration_minutes;
+            $date = is_array($entry) ? ($entry['date'] ?? '') : ($entry->date instanceof Carbon ? $entry->date->toDateString() : (string) $entry->date);
+
+            if ($dayType === 'holiday') {
+                $hlMinutes += (int) $durationMin;
+                $hlDates[$date] = true;
+            } else {
+                $wdMinutes += (int) $durationMin;
+                $wdDates[$date] = true;
+            }
+        }
+
+        $wdDays = count($wdDates);
+        $hlDays = count($hlDates);
+
+        $calcResult = $this->calculateForEmployee($employee, [
+            'working_day_minutes' => $wdMinutes,
+            'working_day_days' => $wdDays,
+            'holiday_minutes' => $hlMinutes,
+            'holiday_days' => $hlDays,
+        ]);
+
+        $rate = (float) ($employee->default_overtime_rate ?? 0);
+        $snapshot = $calcResult['snapshot'];
+
+        $wdGrossHours = (float) ($snapshot['working_day']['gross_hours'] ?? 0);
+        $wdNetHours = (float) ($snapshot['working_day']['net_hours'] ?? 0);
+        $wdBreakDeduction = (float) ($snapshot['working_day']['break_deduction'] ?? 0);
+        $wdThreshold = (float) ($snapshot['working_day']['break_threshold'] ?? 3.0);
+        $wdThresholdReached = ($wdMinutes >= (int) round($wdThreshold * 60)) && ($wdDays > 0);
+        $wdPay = (string) ($snapshot['working_day']['result'] ?? '0.00');
+
+        $hlGrossHours = (float) ($snapshot['holiday']['gross_hours'] ?? 0);
+        $hlNetHours = (float) ($snapshot['holiday']['net_hours'] ?? 0);
+        $hlBreakDeduction = (float) ($snapshot['holiday']['break_deduction'] ?? 0);
+        $hlThreshold = (float) ($snapshot['holiday']['break_threshold'] ?? 4.0);
+        $hlThresholdReached = ($hlMinutes >= (int) round($hlThreshold * 60)) && ($hlDays > 0);
+        $hlPay = (string) ($snapshot['holiday']['result'] ?? '0.00');
+
+        // Evaluate gross pay before break deductions to calculate exact break deduction nominal
+        $workingFormula = $snapshot['working_day']['formula_snapshot'] ?? $this->getDefaultWorkingDayFormula();
+        $holidayFormula = $snapshot['holiday']['formula_snapshot'] ?? $this->getDefaultHolidayFormula();
+
+        $grossWdPay = '0.00';
+        if ($wdGrossHours > 0 && $rate > 0) {
+            $grossWdEval = $this->formulaEvaluator->evaluate($workingFormula, [
+                'employee_overtime_rate' => $rate,
+                'overtime_days' => $wdDays,
+                'total_overtime_hours' => $wdGrossHours,
+            ]);
+            $grossWdPay = $grossWdEval['result'];
+        }
+
+        $grossHlPay = '0.00';
+        if ($hlGrossHours > 0 && $rate > 0) {
+            $grossHlEval = $this->formulaEvaluator->evaluate($holidayFormula, [
+                'employee_overtime_rate' => $rate,
+                'total_overtime_hours' => $hlGrossHours,
+            ]);
+            $grossHlPay = $grossHlEval['result'];
+        }
+
+        $nominalPotonganWd = bcsub($grossWdPay, $wdPay, 2);
+        $nominalPotonganHl = bcsub($grossHlPay, $hlPay, 2);
+        $totalNominalPotongan = bcadd($nominalPotonganWd, $nominalPotonganHl, 2);
+        $totalUpahBruto = bcadd($grossWdPay, $grossHlPay, 2);
+        $totalUpahBersih = $calcResult['amount'];
+
+        return [
+            'employee_id' => $employee->id,
+            'employee_number' => $employee->employee_number,
+            'employee_name' => $employee->full_name,
+            'department' => $employee->department_snapshot ?? $employee->department?->name ?? (string) $employee->department,
+            'rate' => $rate,
+            'rate_formatted' => 'Rp ' . number_format($rate, 0, ',', '.'),
+            'entries_count' => count($entriesList),
+            'working_day' => [
+                'entries_count' => count(array_filter($entriesList, fn ($e) => (is_array($e) ? $e['day_type'] : $e->day_type) === 'working_day')),
+                'gross_minutes' => $wdMinutes,
+                'gross_hours' => $wdGrossHours,
+                'days' => $wdDays,
+                'threshold' => $wdThreshold,
+                'threshold_reached' => $wdThresholdReached,
+                'break_deduction_hours' => $wdBreakDeduction,
+                'net_hours' => $wdNetHours,
+                'gross_pay' => $grossWdPay,
+                'gross_pay_formatted' => 'Rp ' . number_format((float) $grossWdPay, 0, ',', '.'),
+                'deduction_amount' => $nominalPotonganWd,
+                'deduction_amount_formatted' => 'Rp ' . number_format((float) $nominalPotonganWd, 0, ',', '.'),
+                'pay' => $wdPay,
+                'pay_formatted' => 'Rp ' . number_format((float) $wdPay, 0, ',', '.'),
+            ],
+            'holiday' => [
+                'entries_count' => count(array_filter($entriesList, fn ($e) => (is_array($e) ? $e['day_type'] : $e->day_type) === 'holiday')),
+                'gross_minutes' => $hlMinutes,
+                'gross_hours' => $hlGrossHours,
+                'days' => $hlDays,
+                'threshold' => $hlThreshold,
+                'threshold_reached' => $hlThresholdReached,
+                'break_deduction_hours' => $hlBreakDeduction,
+                'net_hours' => $hlNetHours,
+                'gross_pay' => $grossHlPay,
+                'gross_pay_formatted' => 'Rp ' . number_format((float) $grossHlPay, 0, ',', '.'),
+                'deduction_amount' => $nominalPotonganHl,
+                'deduction_amount_formatted' => 'Rp ' . number_format((float) $nominalPotonganHl, 0, ',', '.'),
+                'pay' => $hlPay,
+                'pay_formatted' => 'Rp ' . number_format((float) $hlPay, 0, ',', '.'),
+            ],
+            'total_gross_hours' => (float) ($snapshot['total_gross_hours'] ?? 0),
+            'total_break_deduction_hours' => (float) ($snapshot['total_break_deduction'] ?? 0),
+            'total_net_hours' => (float) ($snapshot['total_net_hours'] ?? 0),
+            'total_upah_bruto' => $totalUpahBruto,
+            'total_upah_bruto_formatted' => 'Rp ' . number_format((float) $totalUpahBruto, 0, ',', '.'),
+            'total_potongan_lembur' => $totalNominalPotongan,
+            'total_potongan_lembur_formatted' => 'Rp ' . number_format((float) $totalNominalPotongan, 0, ',', '.'),
+            'total_upah_lembur' => $totalUpahBersih,
+            'total_upah_lembur_formatted' => 'Rp ' . number_format((float) $totalUpahBersih, 0, ',', '.'),
+            'total_bersih_lembur' => $totalUpahBersih,
+            'trace' => $calcResult['trace'],
+        ];
+    }
 }
+

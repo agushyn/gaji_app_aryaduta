@@ -29,6 +29,7 @@ export default function EmployeesEdit({ employee, offices = [], positions = [], 
         bpjs_ketenagakerjaan_enabled: Boolean(employee.bpjs_ketenagakerjaan_enabled),
         bpjs_ketenagakerjaan_amount: employee.bpjs_ketenagakerjaan_amount ?? 0,
         default_overtime_rate: employee.default_overtime_rate ?? 0,
+        payroll_type: employee.payroll_type || '',
     });
 
     const selectedOffice = offices.find(
@@ -207,6 +208,24 @@ export default function EmployeesEdit({ employee, offices = [], positions = [], 
                                         ))}
                                     </select>
                                     <InputError message={errors.position_id} className="mt-1" />
+                                </div>
+
+                                <div className="sm:col-span-2">
+                                    <InputLabel htmlFor="payroll_type" value="Tipe Payroll Khusus (Opsional)" />
+                                    <select
+                                        id="payroll_type"
+                                        value={data.payroll_type}
+                                        onChange={(e) => setData('payroll_type', e.target.value)}
+                                        className="mt-1 block w-full rounded-md border-slate-300 shadow-xs focus:border-indigo-600 focus:ring-indigo-600 text-xs font-medium"
+                                    >
+                                        <option value="">Otomatis (Mengikuti Tipe Payroll Jabatan)</option>
+                                        <option value="regular">Reguler (Gaji & Lembur Standar)</option>
+                                        <option value="security">Security (Modul Lembur & Rekap Security)</option>
+                                    </select>
+                                    <p className="text-[11px] text-slate-500 mt-1">
+                                        Kosongkan jika ingin mengikuti pengaturan tipe payroll dari jabatan karyawan di atas.
+                                    </p>
+                                    <InputError message={errors.payroll_type} className="mt-1" />
                                 </div>
                             </div>
                         </div>

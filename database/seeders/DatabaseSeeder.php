@@ -24,6 +24,7 @@ class DatabaseSeeder extends Seeder
             PayslipSeeder::class,
             HolidayCalendarSeeder::class,
             PayrollCalculationConfigSeeder::class,
+            SecurityPayrollConfigSeeder::class,
         ]);
     }
 }

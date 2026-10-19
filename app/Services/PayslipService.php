@@ -6,11 +6,13 @@ use App\Enums\PayrollPeriodStatus;
 use App\Enums\PayslipStatus;
 use App\Models\CompanySetting;
 use App\Models\Employee;
+use App\Models\OvertimeEntry;
 use App\Models\PayComponent;
 use App\Models\PayrollApprovalEvent;
 use App\Models\PayrollPeriod;
 use App\Models\Payslip;
 use App\Models\User;
+use Carbon\Carbon;
 use DomainException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -452,15 +454,37 @@ class PayslipService
                         'updated_by' => $actorId,
                     ]);
 
+                    if ($employee->isSecurity()) {
+                        if (\App\Models\SecurityOvertimeSummary::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()
+                            || \App\Models\SecurityAttendance::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()) {
+                            app(SecurityPayrollCalculationService::class)->syncSecurityPayslip($period, $employee);
+                        }
+                    } else {
+                        if (OvertimeEntry::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()) {
+                            $this->syncEmployeeOvertime($period, $employee);
+                        }
+                    }
+
                     $updatedCount++;
                 } else {
                     // Create new payslip
-                    $this->createPayslip($period, [
+                    $newSlip = $this->createPayslip($period, [
                         'employee_id' => $employee->id,
                         'working_days' => $workingDays,
                         'items' => $masterItems,
                         'created_by' => $actorId,
                     ]);
+
+                    if ($employee->isSecurity()) {
+                        if (\App\Models\SecurityOvertimeSummary::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()
+                            || \App\Models\SecurityAttendance::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()) {
+                            app(SecurityPayrollCalculationService::class)->syncSecurityPayslip($period, $employee);
+                        }
+                    } else {
+                        if (OvertimeEntry::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()) {
+                            $this->syncEmployeeOvertime($period, $employee);
+                        }
+                    }
 
                     $createdCount++;
                 }
@@ -552,4 +576,143 @@ class PayslipService
             'calculation_snapshot' => $result['snapshot'],
         ];
     }
+
+    /**
+     * Synchronize overtime entries into the employee's draft payslip for a given period.
+     */
+    public function syncEmployeeOvertime(PayrollPeriod $period, Employee|int $employee): ?Payslip
+    {
+        $employeeModel = $employee instanceof Employee ? $employee : Employee::findOrFail($employee);
+
+        // Fetch draft / modifiable payslip for this period and employee
+        $payslip = Payslip::with('items')
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $employeeModel->id)
+            ->first();
+
+        // If no payslip exists yet, or if it cannot be modified, do not mutate
+        if (! $payslip || ! $payslip->canBeModified()) {
+            return $payslip;
+        }
+
+        // Get all overtime entries for this employee in this period
+        $entries = OvertimeEntry::where('payroll_period_id', $period->id)
+            ->where('employee_id', $employeeModel->id)
+            ->get();
+
+        $workingDayMinutes = 0;
+        $workingDayDates = [];
+        $holidayMinutes = 0;
+        $holidayDates = [];
+
+        foreach ($entries as $entry) {
+            $dateStr = $entry->date instanceof Carbon ? $entry->date->toDateString() : (string) $entry->date;
+            if ($entry->day_type === 'holiday') {
+                $holidayMinutes += (int) $entry->duration_minutes;
+                $holidayDates[$dateStr] = true;
+            } else {
+                $workingDayMinutes += (int) $entry->duration_minutes;
+                $workingDayDates[$dateStr] = true;
+            }
+        }
+
+        $totalMinutes = $workingDayMinutes + $holidayMinutes;
+
+        // If there are no overtime entries at all
+        if ($totalMinutes === 0) {
+            $existingItem = $payslip->items()->where('item_code_snapshot', 'OVERTIME')->first();
+            if ($existingItem) {
+                $existingItem->delete();
+            }
+
+            $itemsArray = $payslip->items()->get()->map(function ($it) {
+                return [
+                    'item_code_snapshot' => $it->item_code_snapshot,
+                    'description_snapshot' => $it->description_snapshot,
+                    'item_type' => $it->item_type,
+                    'amount' => $it->amount,
+                ];
+            })->toArray();
+
+            $totals = $this->calculationService->calculate($itemsArray);
+
+            $payslip->update([
+                'basic_salary' => $totals['basic_salary'],
+                'total_earnings' => $totals['total_earnings'],
+                'total_deductions' => $totals['total_deductions'],
+                'net_salary' => $totals['net_salary'],
+                'gaji_bruto' => $totals['gaji_bruto'],
+                'uang_dinas' => $totals['uang_dinas'],
+            ]);
+
+            return $payslip->fresh(['items']);
+        }
+
+        // Calculate overtime with OvertimeCalculationService
+        $params = [
+            'working_day_minutes' => $workingDayMinutes,
+            'working_day_days' => count($workingDayDates),
+            'holiday_minutes' => $holidayMinutes,
+            'holiday_days' => count($holidayDates),
+        ];
+
+        $overtimeData = $this->calculateOvertimeItem($employeeModel, $params);
+
+        $overtimeComp = PayComponent::where('code', 'OVERTIME')->first();
+        $item = $payslip->items()->where('item_code_snapshot', 'OVERTIME')->first();
+
+        if ($item) {
+            $item->update([
+                'pay_component_id' => $overtimeComp?->id ?? $item->pay_component_id,
+                'description_snapshot' => $overtimeComp?->name ?? 'Uang Lembur',
+                'item_type' => 'earning',
+                'quantity' => $overtimeData['quantity'],
+                'unit' => 'jam',
+                'rate' => $overtimeData['rate'],
+                'amount' => $overtimeData['amount'],
+                'calculation_config_id' => $overtimeData['calculation_config_id'],
+                'calculation_config_version' => $overtimeData['calculation_config_version'],
+                'calculation_snapshot' => $overtimeData['calculation_snapshot'],
+            ]);
+        } else {
+            $payslip->items()->create([
+                'pay_component_id' => $overtimeComp?->id,
+                'item_code_snapshot' => 'OVERTIME',
+                'description_snapshot' => $overtimeComp?->name ?? 'Uang Lembur',
+                'item_type' => 'earning',
+                'category' => 'variable',
+                'quantity' => $overtimeData['quantity'],
+                'unit' => 'jam',
+                'rate' => $overtimeData['rate'],
+                'amount' => $overtimeData['amount'],
+                'calculation_config_id' => $overtimeData['calculation_config_id'],
+                'calculation_config_version' => $overtimeData['calculation_config_version'],
+                'calculation_snapshot' => $overtimeData['calculation_snapshot'],
+                'sort_order' => 10,
+            ]);
+        }
+
+        $itemsArray = $payslip->items()->get()->map(function ($it) {
+            return [
+                'item_code_snapshot' => $it->item_code_snapshot,
+                'description_snapshot' => $it->description_snapshot,
+                'item_type' => $it->item_type,
+                'amount' => $it->amount,
+            ];
+        })->toArray();
+
+        $totals = $this->calculationService->calculate($itemsArray);
+
+        $payslip->update([
+            'basic_salary' => $totals['basic_salary'],
+            'total_earnings' => $totals['total_earnings'],
+            'total_deductions' => $totals['total_deductions'],
+            'net_salary' => $totals['net_salary'],
+            'gaji_bruto' => $totals['gaji_bruto'],
+            'uang_dinas' => $totals['uang_dinas'],
+        ]);
+
+        return $payslip->fresh(['items']);
+    }
 }
+

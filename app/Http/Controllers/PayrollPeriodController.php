@@ -4,8 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StorePayrollPeriodRequest;
 use App\Http\Requests\UpdatePayrollPeriodRequest;
+use App\Models\Employee;
+use App\Models\PayrollCalculationConfig;
 use App\Models\PayrollPeriod;
 use App\Models\Payslip;
+use App\Services\OvertimeCalculationService;
 use App\Services\PayrollPeriodService;
 use App\Services\PayslipFinalizationService;
 use App\Services\PayslipService;
@@ -92,7 +95,7 @@ class PayrollPeriodController extends Controller
     /**
      * Display the specified payroll period and its slips.
      */
-    public function show(Request $request, PayrollPeriod $payrollPeriod): Response
+    public function show(Request $request, PayrollPeriod $payrollPeriod, OvertimeCalculationService $overtimeService): Response
     {
         $this->authorize('view', $payrollPeriod);
 
@@ -118,12 +121,69 @@ class PayrollPeriodController extends Controller
             'total_net' => (float) $payrollPeriod->payslips()->sum('net_salary'),
         ];
 
+        // Overtime entries for this period
+        $overtimeEntries = $payrollPeriod->overtimeEntries()
+            ->with(['employee:id,employee_number,full_name,department,position,default_overtime_rate', 'creator:id,name', 'updater:id,name'])
+            ->orderBy('date', 'desc')
+            ->orderBy('start_time', 'desc')
+            ->get();
+
+        $activeEmployees = Employee::where('employment_status', 'active')
+            ->orderBy('full_name')
+            ->get(['id', 'employee_number', 'full_name', 'department', 'position', 'default_overtime_rate']);
+
+        // Overtime Recap per employee
+        $entriesGrouped = $overtimeEntries->groupBy('employee_id');
+        $overtimeRecap = [];
+        $overtimeTotals = [
+            'total_entries' => $overtimeEntries->count(),
+            'total_working_day_hours' => 0.0,
+            'total_holiday_hours' => 0.0,
+            'total_break_deduction_hours' => 0.0,
+            'total_net_hours' => 0.0,
+            'total_upah_bruto' => '0.00',
+            'total_potongan_lembur' => '0.00',
+            'total_upah_bersih' => '0.00',
+        ];
+
+        foreach ($entriesGrouped as $empId => $entries) {
+            $emp = $entries->first()->employee ?? Employee::find($empId);
+            if (! $emp) {
+                continue;
+            }
+            $recap = $overtimeService->calculateEmployeeOvertimeRecap($emp, $entries);
+            $overtimeRecap[] = $recap;
+
+            $overtimeTotals['total_working_day_hours'] += $recap['working_day']['gross_hours'];
+            $overtimeTotals['total_holiday_hours'] += $recap['holiday']['gross_hours'];
+            $overtimeTotals['total_break_deduction_hours'] += $recap['total_break_deduction_hours'];
+            $overtimeTotals['total_net_hours'] += $recap['total_net_hours'];
+            $overtimeTotals['total_upah_bruto'] = bcadd($overtimeTotals['total_upah_bruto'], $recap['total_upah_bruto'], 2);
+            $overtimeTotals['total_potongan_lembur'] = bcadd($overtimeTotals['total_potongan_lembur'], $recap['total_potongan_lembur'], 2);
+            $overtimeTotals['total_upah_bersih'] = bcadd($overtimeTotals['total_upah_bersih'], $recap['total_upah_lembur'], 2);
+        }
+
+        // Active Overtime Configuration
+        $workingConfig = PayrollCalculationConfig::with('currentVersionRecord')->active()->forDayType('working_day')->first();
+        $holidayConfig = PayrollCalculationConfig::with('currentVersionRecord')->active()->forDayType('holiday')->first();
+        $overtimeConfig = [
+            'working_day_threshold' => (float) ($workingConfig?->currentVersionRecord?->formula['break_threshold'] ?? 3.0),
+            'working_day_duration' => (float) ($workingConfig?->currentVersionRecord?->formula['break_duration_per_day'] ?? 0.5),
+            'holiday_threshold' => (float) ($holidayConfig?->currentVersionRecord?->formula['break_threshold'] ?? 4.0),
+            'holiday_duration' => (float) ($holidayConfig?->currentVersionRecord?->formula['break_duration_per_day'] ?? 1.0),
+        ];
+
         $user = $request->user();
 
         return Inertia::render('PayrollPeriods/Show', [
             'period' => $payrollPeriod,
             'payslips' => $payslips,
             'totals' => $totals,
+            'overtimeEntries' => $overtimeEntries,
+            'overtimeRecap' => $overtimeRecap,
+            'overtimeTotals' => $overtimeTotals,
+            'overtimeConfig' => $overtimeConfig,
+            'activeEmployees' => $activeEmployees,
             'filters' => $request->only(['search', 'status']),
             'can' => [
                 'update' => $user ? $user->can('update', $payrollPeriod) : false,
@@ -132,6 +192,7 @@ class PayrollPeriodController extends Controller
                 'finalize' => $user ? $user->can('finalize', $payrollPeriod) : false,
                 'create_payslip' => $user ? $user->can('create', Payslip::class) : false,
                 'generate_payroll' => $user ? ($user->can('update', $payrollPeriod) && $payrollPeriod->canBeModified()) : false,
+                'manage_overtime' => $user ? ($user->can('update', $payrollPeriod) && $payrollPeriod->canBeModified()) : false,
             ],
         ]);
     }

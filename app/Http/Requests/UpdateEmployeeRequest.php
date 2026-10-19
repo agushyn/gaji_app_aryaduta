@@ -127,6 +127,12 @@ class UpdateEmployeeRequest extends FormRequest
                 'default_overtime_rate' => $this->input('default_overtime_rate') ?? 0,
             ]);
         }
+
+        if ($this->has('payroll_type')) {
+            $this->merge([
+                'payroll_type' => $this->filled('payroll_type') ? $this->input('payroll_type') : null,
+            ]);
+        }
     }
 
     /**
@@ -160,6 +166,7 @@ class UpdateEmployeeRequest extends FormRequest
                 }),
             ],
             'position_id' => ['required', 'integer', 'exists:positions,id'],
+            'payroll_type' => ['nullable', 'string', 'in:regular,security'],
             'department_id' => ['nullable', 'integer', 'exists:departments,id'],
             'department' => ['nullable', 'string', 'max:150'],
             'position' => ['nullable', 'string', 'max:150'],

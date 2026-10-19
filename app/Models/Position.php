@@ -14,6 +14,7 @@ class Position extends Model
     protected $fillable = [
         'name',
         'code',
+        'payroll_type',
         'description',
         'is_active',
     ];
@@ -23,6 +24,14 @@ class Position extends Model
         return [
             'is_active' => 'boolean',
         ];
+    }
+
+    /**
+     * Check if this position has security payroll type.
+     */
+    public function isSecurity(): bool
+    {
+        return ($this->payroll_type ?? 'regular') === 'security';
     }
 
     /**

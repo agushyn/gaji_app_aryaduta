@@ -13,6 +13,7 @@ import {
     Edit3,
     Plus,
     Search,
+    ShieldCheck,
     ToggleLeft,
     ToggleRight,
     Trash2,
@@ -37,6 +38,7 @@ export default function PositionsIndex({ positions, counts, filters }) {
     const { data, setData, post, put, reset, processing, errors, clearErrors } = useForm({
         name: '',
         code: '',
+        payroll_type: 'regular',
         description: '',
         is_active: true,
     });
@@ -69,6 +71,7 @@ export default function PositionsIndex({ positions, counts, filters }) {
         setData({
             name: '',
             code: '',
+            payroll_type: 'regular',
             description: '',
             is_active: true,
         });
@@ -81,6 +84,7 @@ export default function PositionsIndex({ positions, counts, filters }) {
         setData({
             name: position.name,
             code: position.code || '',
+            payroll_type: position.payroll_type || 'regular',
             description: position.description || '',
             is_active: Boolean(position.is_active),
         });
@@ -242,6 +246,7 @@ export default function PositionsIndex({ positions, counts, filters }) {
                             <thead className="bg-gray-50/75 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                                 <tr>
                                     <th className="px-6 py-4">Jabatan</th>
+                                    <th className="px-6 py-4">Tipe Payroll</th>
                                     <th className="px-6 py-4">Deskripsi</th>
                                     <th className="px-6 py-4 text-center">Jumlah Karyawan</th>
                                     <th className="px-6 py-4 text-center">Status</th>
@@ -260,10 +265,22 @@ export default function PositionsIndex({ positions, counts, filters }) {
                                                     <div>
                                                         <div className="font-semibold text-gray-900">{pos.name}</div>
                                                         {pos.code && (
-                                                            <div className="text-xs text-gray-500 font-mono mt-0.5">Kode: {pos.code}</div>
+                                                             <div className="text-xs text-gray-500 font-mono mt-0.5">Kode: {pos.code}</div>
                                                         )}
                                                     </div>
                                                 </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                {pos.payroll_type === 'security' ? (
+                                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                                                        <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                                                        Security
+                                                    </span>
+                                                ) : (
+                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                                                        Reguler
+                                                    </span>
+                                                )}
                                             </td>
                                             <td className="px-6 py-4 max-w-sm">
                                                 <div className="text-xs text-gray-600 line-clamp-2">
@@ -432,6 +449,23 @@ export default function PositionsIndex({ positions, counts, filters }) {
                                 maxLength={20}
                             />
                             <InputError message={errors.code} className="mt-1" />
+                        </div>
+
+                        <div>
+                            <InputLabel htmlFor="payroll_type" value="Tipe Payroll *" />
+                            <select
+                                id="payroll_type"
+                                className="mt-1 block w-full border-gray-300 focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 rounded-md shadow-sm text-sm"
+                                value={data.payroll_type}
+                                onChange={(e) => setData('payroll_type', e.target.value)}
+                            >
+                                <option value="regular">Reguler (Rumus Payroll Standar)</option>
+                                <option value="security">Security (Modul Lembur & Rekap Khusus Security)</option>
+                            </select>
+                            <p className="text-xs text-gray-500 mt-1">
+                                Karyawan dengan jabatan bertipe Security akan otomatis dihitung menggunakan modul lembur Security.
+                            </p>
+                            <InputError message={errors.payroll_type} className="mt-1" />
                         </div>
 
                         <div>

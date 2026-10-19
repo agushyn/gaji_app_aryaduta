@@ -37,8 +37,9 @@ class OrganizationMasterSeeder extends Seeder
             ['name' => 'Administrasi', 'code' => 'ADM', 'description' => 'Staf Administrasi Umum'],
             ['name' => 'Finance Staff', 'code' => 'FIN-STF', 'description' => 'Staf Keuangan dan Akuntansi'],
             ['name' => 'Marketing Staff', 'code' => 'MKT-STF', 'description' => 'Staf Pemasaran dan Penjualan'],
-            ['name' => 'Teknisi', 'code' => 'TKN', 'description' => 'Staf Pemeliharaan dan Teknis'],
-            ['name' => 'Driver', 'code' => 'DRV', 'description' => 'Pengemudi Operasional'],
+            ['name' => 'Teknisi', 'code' => 'TKN', 'description' => 'Staf Pemeliharaan dan Teknis', 'payroll_type' => 'regular'],
+            ['name' => 'Driver', 'code' => 'DRV', 'description' => 'Pengemudi Operasional', 'payroll_type' => 'regular'],
+            ['name' => 'Security', 'code' => 'SEC', 'description' => 'Petugas Keamanan', 'payroll_type' => 'security'],
         ];
 
         $positionsMap = [];
@@ -47,6 +48,7 @@ class OrganizationMasterSeeder extends Seeder
                 ['code' => $pData['code']],
                 [
                     'name' => $pData['name'],
+                    'payroll_type' => $pData['payroll_type'] ?? 'regular',
                     'description' => $pData['description'],
                     'is_active' => true,
                 ]

@@ -7,6 +7,7 @@ use App\Http\Requests\StorePayslipRequest;
 use App\Http\Requests\UpdatePayslipRequest;
 use App\Models\AuditLog;
 use App\Models\Employee;
+use App\Models\OvertimeEntry;
 use App\Models\PayComponent;
 use App\Models\PayrollPeriod;
 use App\Models\Payslip;
@@ -145,6 +146,10 @@ class PayslipController extends Controller
 
         try {
             $payslip = $this->payslipService->createPayslip($period, $request->validated());
+
+            if (OvertimeEntry::where('payroll_period_id', $period->id)->where('employee_id', $payslip->employee_id)->exists()) {
+                $this->payslipService->syncEmployeeOvertime($period, $payslip->employee_id);
+            }
 
             return redirect()
                 ->route('payroll-periods.show', $period)

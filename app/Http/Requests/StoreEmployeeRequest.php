@@ -132,6 +132,7 @@ class StoreEmployeeRequest extends FormRequest
             'uang_makan_per_hari' => $this->input('uang_makan_per_hari') ?? 0,
             'uang_transportasi_per_hari' => $this->input('uang_transportasi_per_hari') ?? 0,
             'default_overtime_rate' => $this->input('default_overtime_rate') ?? 0,
+            'payroll_type' => $this->filled('payroll_type') ? $this->input('payroll_type') : null,
         ]);
     }
 
@@ -159,6 +160,7 @@ class StoreEmployeeRequest extends FormRequest
                 }),
             ],
             'position_id' => ['required', 'integer', 'exists:positions,id'],
+            'payroll_type' => ['nullable', 'string', 'in:regular,security'],
             'department_id' => ['nullable', 'integer', 'exists:departments,id'],
             'department' => ['nullable', 'string', 'max:150'],
             'position' => ['nullable', 'string', 'max:150'],

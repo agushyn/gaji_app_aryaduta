@@ -37,7 +37,7 @@ class PayrollCalculationConfigPolicy
     /**
      * Determine whether the user can update the model.
      */
-    public function update(User $user, PayrollCalculationConfig $config): bool
+    public function update(User $user, ?PayrollCalculationConfig $config = null): bool
     {
         return $user->hasPermission('payroll.configuration.update')
             || $user->hasRole('super_admin');

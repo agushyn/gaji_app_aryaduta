@@ -101,9 +101,43 @@ class PayrollCalculationConfigController extends Controller
             'holiday' => PayrollCalculationConfig::where('day_type', 'holiday')->count(),
         ];
 
+        // Resolve active thresholds for working day and holiday
+        $workingConfig = PayrollCalculationConfig::with('currentVersionRecord')
+            ->active()
+            ->where(function ($q) {
+                $q->where('code', 'OVERTIME_WORKING_DAY')->orWhere('day_type', 'working_day');
+            })
+            ->first();
+
+        $holidayConfig = PayrollCalculationConfig::with('currentVersionRecord')
+            ->active()
+            ->where(function ($q) {
+                $q->where('code', 'OVERTIME_HOLIDAY')->orWhere('day_type', 'holiday');
+            })
+            ->first();
+
+        $workingThreshold = isset($workingConfig?->currentVersionRecord?->formula['break_threshold']) && is_numeric($workingConfig->currentVersionRecord->formula['break_threshold'])
+            ? (float) $workingConfig->currentVersionRecord->formula['break_threshold']
+            : 3.0;
+
+        $holidayThreshold = isset($holidayConfig?->currentVersionRecord?->formula['break_threshold']) && is_numeric($holidayConfig->currentVersionRecord->formula['break_threshold'])
+            ? (float) $holidayConfig->currentVersionRecord->formula['break_threshold']
+            : 4.0;
+
+        $overtimeSettings = [
+            'working_day_threshold' => $workingThreshold,
+            'working_day_duration' => 0.5,
+            'working_day_version' => $workingConfig?->current_version ?? 1,
+            'holiday_threshold' => $holidayThreshold,
+            'holiday_duration' => 1.0,
+            'holiday_version' => $holidayConfig?->current_version ?? 1,
+            'operator' => '>=',
+        ];
+
         return Inertia::render('PayrollConfigurations/Index', [
             'configs' => $configs,
             'counts' => $counts,
+            'overtimeSettings' => $overtimeSettings,
             'filters' => $request->only(['search', 'day_type', 'status']),
         ]);
     }
@@ -299,5 +333,45 @@ class PayrollCalculationConfigController extends Controller
                 'message' => $e->getMessage(),
             ], 422);
         }
+    }
+
+    /**
+     * Update overtime hours threshold configuration via dedicated UI form.
+     */
+    public function updateOvertimeSettings(Request $request): RedirectResponse
+    {
+        $this->authorize('update', PayrollCalculationConfig::class);
+
+        $validated = $request->validate([
+            'working_day_threshold' => ['nullable', 'numeric', 'min:0.5', 'max:24'],
+            'holiday_threshold' => ['nullable', 'numeric', 'min:0.5', 'max:24'],
+        ], [
+            'working_day_threshold.numeric' => 'Batas jam lembur hari biasa harus berupa angka numerik.',
+            'working_day_threshold.min' => 'Batas jam lembur hari biasa minimal 0.5 jam.',
+            'working_day_threshold.max' => 'Batas jam lembur hari biasa maksimal 24 jam.',
+            'holiday_threshold.numeric' => 'Batas jam lembur hari libur harus berupa angka numerik.',
+            'holiday_threshold.min' => 'Batas jam lembur hari libur minimal 0.5 jam.',
+            'holiday_threshold.max' => 'Batas jam lembur hari libur maksimal 24 jam.',
+        ]);
+
+        if (! array_key_exists('working_day_threshold', $validated) && ! array_key_exists('holiday_threshold', $validated)) {
+            return redirect()
+                ->back()
+                ->with('error', 'Setidaknya satu batas jam lembur harus disediakan.');
+        }
+
+        $wThreshold = isset($validated['working_day_threshold']) && $validated['working_day_threshold'] !== null
+            ? (float) $validated['working_day_threshold']
+            : null;
+
+        $hThreshold = isset($validated['holiday_threshold']) && $validated['holiday_threshold'] !== null
+            ? (float) $validated['holiday_threshold']
+            : null;
+
+        $this->configService->updateOvertimeThresholds($wThreshold, $hThreshold);
+
+        return redirect()
+            ->route('payroll-configurations.index')
+            ->with('success', 'Pengaturan jam lembur dan batas potongan istirahat berhasil disimpan ke database.');
     }
 }

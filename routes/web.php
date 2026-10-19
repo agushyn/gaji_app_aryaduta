@@ -16,6 +16,7 @@ use App\Http\Controllers\PayslipController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RoleController;
+use App\Http\Controllers\SecurityPayrollController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\WhatsAppSettingController;
 use App\Http\Controllers\WhatsAppWebhookController;
@@ -94,12 +95,23 @@ Route::middleware(['auth', 'active'])->group(function () {
     Route::post('/payroll-periods/{payrollPeriod}/finalize', [PayrollPeriodController::class, 'finalize'])
         ->name('payroll-periods.finalize');
 
+    // Data Lembur Karyawan per Periode
+    Route::post('/payroll-periods/{payrollPeriod}/overtimes', [\App\Http\Controllers\OvertimeEntryController::class, 'store'])
+        ->name('payroll-periods.overtimes.store');
+    Route::put('/payroll-periods/{payrollPeriod}/overtimes/{overtimeEntry}', [\App\Http\Controllers\OvertimeEntryController::class, 'update'])
+        ->name('payroll-periods.overtimes.update');
+    Route::delete('/payroll-periods/{payrollPeriod}/overtimes/{overtimeEntry}', [\App\Http\Controllers\OvertimeEntryController::class, 'destroy'])
+        ->name('payroll-periods.overtimes.destroy');
+    Route::post('/payroll-periods/{payrollPeriod}/overtimes/calculate-preview', [\App\Http\Controllers\OvertimeEntryController::class, 'previewCalculation'])
+        ->name('payroll-periods.overtimes.preview-calculation');
+
     // Master Komponen Gaji (Pay Components Module)
     Route::resource('pay-components', PayComponentController::class)->except(['create', 'show', 'edit']);
     Route::patch('/pay-components/{pay_component}/toggle-status', [PayComponentController::class, 'toggleStatus'])
         ->name('pay-components.toggle-status');
 
-    // Konfigurasi Perhitungan Payroll & Rule Engine (Payroll Calculation Rules)
+    Route::post('/payroll-configurations/overtime-settings', [PayrollCalculationConfigController::class, 'updateOvertimeSettings'])
+        ->name('payroll-configurations.overtime-settings');
     Route::post('/payroll-configurations/test', [PayrollCalculationConfigController::class, 'test'])
         ->name('payroll-configurations.test');
     Route::post('/payroll-configurations/{payroll_configuration}/duplicate', [PayrollCalculationConfigController::class, 'duplicate'])
@@ -120,6 +132,20 @@ Route::middleware(['auth', 'active'])->group(function () {
     // Route aliases for convenience
     Route::get('/payroll/configurations', fn () => redirect()->route('payroll-configurations.index'))->name('payroll.configurations');
     Route::get('/payroll/holidays', fn () => redirect()->route('holiday-calendars.index'))->name('payroll.holidays');
+
+    // Modul Payroll Security
+    Route::get('/payroll-security', [SecurityPayrollController::class, 'index'])
+        ->name('payroll-security.index');
+    Route::post('/payroll-security/attendance', [SecurityPayrollController::class, 'updateAttendance'])
+        ->name('payroll-security.attendance.update');
+    Route::post('/payroll-security/summary', [SecurityPayrollController::class, 'updateSummary'])
+        ->name('payroll-security.summary.update');
+    Route::post('/payroll-security/config', [SecurityPayrollController::class, 'updateConfig'])
+        ->name('payroll-security.config.update');
+    Route::post('/payroll-security/periods/{period}/sync', [SecurityPayrollController::class, 'syncPayslips'])
+        ->name('payroll-security.periods.sync');
+    Route::get('/payroll-security/periods/{period}/export-excel', [SecurityPayrollController::class, 'exportExcel'])
+        ->name('payroll-security.periods.export-excel');
 
     // Slip Gaji (Payslips Module)
     Route::resource('payslips', PayslipController::class);

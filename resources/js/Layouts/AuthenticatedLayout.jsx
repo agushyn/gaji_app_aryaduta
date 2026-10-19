@@ -22,6 +22,7 @@ import {
     Send,
     Shield,
     ShieldAlert,
+    ShieldCheck,
     Smartphone,
     UserCheck,
     Users,
@@ -188,6 +189,13 @@ export default function AuthenticatedLayout({ title, header, children }) {
                     icon: CheckCircle,
                     active: route().current('approvals.*'),
                     visible: can('approvals.view'),
+                },
+                {
+                    label: 'Payroll Security',
+                    route: 'payroll-security.index',
+                    icon: ShieldCheck,
+                    active: route().current('payroll-security.*'),
+                    visible: can('payroll.security.view') || can('payslips.view'),
                 },
                 {
                     label: 'Pelacakan Pengiriman',

@@ -938,4 +938,239 @@ class PayrollCalculationConfigTest extends TestCase
         $this->assertStringContainsString('3 jam', $versions[0]['preview']);
         $this->assertStringNotContainsString('3.1', $versions[0]['preview']);
     }
+
+    /**
+     * Test Default Overtime Threshold Configuration:
+     * - Hari biasa default 3.0 jam (180 menit)
+     * - Hari libur default 4.0 jam (240 menit)
+     * - Operator >=
+     */
+    public function test_default_overtime_threshold_configuration_and_props(): void
+    {
+        $response = $this->actingAs($this->personalia)->get('/payroll-configurations');
+        $response->assertOk();
+
+        $overtimeSettings = $response->inertiaPage()['props']['overtimeSettings'];
+        $this->assertNotNull($overtimeSettings);
+        $this->assertEquals(3.0, $overtimeSettings['working_day_threshold']);
+        $this->assertEquals(0.5, $overtimeSettings['working_day_duration']);
+        $this->assertEquals(4.0, $overtimeSettings['holiday_threshold']);
+        $this->assertEquals(1.0, $overtimeSettings['holiday_duration']);
+        $this->assertEquals('>=', $overtimeSettings['operator']);
+
+        // Default boundary check on calculation engine
+        // Hari biasa: 2:59 (179 min) vs 3:00 (180 min)
+        $wdBefore = $this->overtimeService->calculateBreakDeduction('2:59', 1, 'working_day');
+        $this->assertFalse($wdBefore['is_deducted']);
+        $this->assertEquals(0.0, $wdBefore['deduction']);
+
+        $wdExact = $this->overtimeService->calculateBreakDeduction('3:00', 1, 'working_day');
+        $this->assertTrue($wdExact['is_deducted']);
+        $this->assertEquals(0.5, $wdExact['deduction']);
+
+        // Hari libur: 3:59 (239 min) vs 4:00 (240 min)
+        $hlBefore = $this->overtimeService->calculateBreakDeduction('3:59', 1, 'holiday');
+        $this->assertFalse($hlBefore['is_deducted']);
+        $this->assertEquals(0.0, $hlBefore['deduction']);
+
+        $hlExact = $this->overtimeService->calculateBreakDeduction('4:00', 1, 'holiday');
+        $this->assertTrue($hlExact['is_deducted']);
+        $this->assertEquals(1.0, $hlExact['deduction']);
+    }
+
+    /**
+     * Test Dynamic Overtime Threshold Update (2.5 jam & 3.5 jam):
+     * - Threshold diubah via endpoint POST /payroll-configurations/overtime-settings
+     * - Tersimpan di database pada versi konfigurasi aktif
+     * - Muncul kembali setelah halaman direload
+     * - Digunakan langsung oleh perhitungan actual payroll
+     * - Boundary test pada nilai baru:
+     *   * Hari biasa 2.5 jam (150 mnt): 2:29 (tidak dipotong), 2:30 (dipotong), 2:31 (dipotong)
+     *   * Hari libur 3.5 jam (210 mnt): 3:29 (tidak dipotong), 3:30 (dipotong), 3:31 (dipotong)
+     */
+    public function test_dynamic_threshold_update_persists_and_applies_to_subsequent_payroll(): void
+    {
+        // 1. Simpan konfigurasi baru: 2.5 jam hari biasa, 3.5 jam hari libur
+        $response = $this->actingAs($this->admin)->post('/payroll-configurations/overtime-settings', [
+            'working_day_threshold' => 2.5,
+            'holiday_threshold' => 3.5,
+        ]);
+
+        $response->assertSessionHasNoErrors();
+        $response->assertRedirect(route('payroll-configurations.index'));
+        $response->assertSessionHas('success');
+
+        // 2. Reload halaman konfigurasi dan verifikasi nilai tersimpan
+        $reloadResponse = $this->actingAs($this->personalia)->get('/payroll-configurations');
+        $reloadResponse->assertOk();
+
+        $settings = $reloadResponse->inertiaPage()['props']['overtimeSettings'];
+        $this->assertEquals(2.5, $settings['working_day_threshold']);
+        $this->assertEquals(3.5, $settings['holiday_threshold']);
+
+        // 3. Boundary tests pada threshold 2.5 jam (150 menit)
+        $w229 = $this->overtimeService->calculateBreakDeduction('2:29', 1, 'working_day', 2.5);
+        $this->assertFalse($w229['is_deducted'], '2:29 pada threshold 2.5h tidak boleh dipotong');
+        $this->assertEquals(0.0, $w229['deduction']);
+
+        $w230 = $this->overtimeService->calculateBreakDeduction('2:30', 1, 'working_day', 2.5);
+        $this->assertTrue($w230['is_deducted'], '2:30 pada threshold 2.5h wajib dipotong');
+        $this->assertEquals(0.5, $w230['deduction']);
+
+        $w231 = $this->overtimeService->calculateBreakDeduction('2:31', 1, 'working_day', 2.5);
+        $this->assertTrue($w231['is_deducted'], '2:31 pada threshold 2.5h wajib dipotong');
+        $this->assertEquals(0.5, $w231['deduction']);
+
+        // 4. Boundary tests pada threshold 3.5 jam (210 menit)
+        $h329 = $this->overtimeService->calculateBreakDeduction('3:29', 1, 'holiday', 3.5);
+        $this->assertFalse($h329['is_deducted'], '3:29 pada threshold 3.5h tidak boleh dipotong');
+        $this->assertEquals(0.0, $h329['deduction']);
+
+        $h330 = $this->overtimeService->calculateBreakDeduction('3:30', 1, 'holiday', 3.5);
+        $this->assertTrue($h330['is_deducted'], '3:30 pada threshold 3.5h wajib dipotong');
+        $this->assertEquals(1.0, $h330['deduction']);
+
+        $h331 = $this->overtimeService->calculateBreakDeduction('3:31', 1, 'holiday', 3.5);
+        $this->assertTrue($h331['is_deducted'], '3:31 pada threshold 3.5h wajib dipotong');
+        $this->assertEquals(1.0, $h331['deduction']);
+
+        // 5. Perhitungan aktual karyawan otomatis menggunakan threshold tersimpan di database
+        $employee = Employee::create([
+            'employee_number' => 'EMP-TEST-DYN',
+            'full_name' => 'Karyawan Dinamis',
+            'default_overtime_rate' => 20000,
+            'employment_status' => 'active',
+            'basic_salary' => 4000000,
+        ]);
+
+        // Lembur 2 jam 30 menit (2.5 jam) hari kerja -> karena threshold = 2.5 jam, wajib dipotong 0.5 jam!
+        $resCalc = $this->overtimeService->calculateForEmployee($employee, [
+            'working_day_hours' => 2.5,
+            'working_day_days' => 1,
+            'holiday_hours' => 0,
+        ]);
+
+        // Net hours = 2.5 - 0.5 = 2.0 jam bersih
+        $this->assertEquals('2.00', $resCalc['quantity']);
+        $this->assertEquals('0.50', $resCalc['break_deduction']);
+        $this->assertEquals(2.5, $resCalc['snapshot']['working_day']['break_threshold']);
+
+        // Multiplier tetap terjaga: 1 jam pertama (20.000 * 1 * 1.5 = 30.000) + 1 jam kedua (20.000 * 1 * 2.0 = 40.000) = 70.000
+        $this->assertEquals('70000.00', $resCalc['amount']);
+    }
+
+    /**
+     * Test Partial Overtime Threshold Update:
+     * - Mengirim hanya satu threshold tidak boleh menimpa threshold lainnya
+     */
+    public function test_partial_threshold_update_preserves_other_threshold(): void
+    {
+        // Set awal: 3.0 dan 4.0
+        $this->actingAs($this->admin)->post('/payroll-configurations/overtime-settings', [
+            'working_day_threshold' => 3.0,
+            'holiday_threshold' => 4.0,
+        ]);
+
+        // Update HANYA holiday_threshold menjadi 3.5 (working_day_threshold tidak dikirim / null)
+        $res = $this->actingAs($this->admin)->post('/payroll-configurations/overtime-settings', [
+            'working_day_threshold' => null,
+            'holiday_threshold' => 3.5,
+        ]);
+        $res->assertSessionHasNoErrors();
+
+        // Verifikasi bahwa working_day_threshold TETAP 3.0 dan holiday_threshold menjadi 3.5
+        $indexRes = $this->actingAs($this->personalia)->get('/payroll-configurations');
+        $settings = $indexRes->inertiaPage()['props']['overtimeSettings'];
+        $this->assertEquals(3.0, $settings['working_day_threshold']);
+        $this->assertEquals(3.5, $settings['holiday_threshold']);
+    }
+
+    /**
+     * Test Validation and Security on Overtime Settings:
+     * - User tanpa izin 'payroll.configuration.update' ditolak 403
+     * - Nilai numerik di luar rentang (misal < 0.5 atau > 24) ditolak dengan pesan validasi
+     * - String non-numerik ditolak
+     */
+    public function test_validation_and_rbac_on_overtime_threshold_settings(): void
+    {
+        // 1. Auditor (hanya memiliki view) mencoba update -> 403 Forbidden
+        $resAuditor = $this->actingAs($this->auditor)->post('/payroll-configurations/overtime-settings', [
+            'working_day_threshold' => 2.5,
+            'holiday_threshold' => 3.5,
+        ]);
+        $resAuditor->assertForbidden();
+
+        // 2. Nilai di bawah minimum 0.5 jam
+        $resMin = $this->actingAs($this->admin)->post('/payroll-configurations/overtime-settings', [
+            'working_day_threshold' => 0.2,
+            'holiday_threshold' => 4.0,
+        ]);
+        $resMin->assertSessionHasErrors(['working_day_threshold']);
+
+        // 3. Nilai di atas maksimum 24 jam
+        $resMax = $this->actingAs($this->admin)->post('/payroll-configurations/overtime-settings', [
+            'working_day_threshold' => 3.0,
+            'holiday_threshold' => 25.0,
+        ]);
+        $resMax->assertSessionHasErrors(['holiday_threshold']);
+
+        // 4. Input string non-numerik
+        $resString = $this->actingAs($this->admin)->post('/payroll-configurations/overtime-settings', [
+            'working_day_threshold' => 'invalid-abc',
+            'holiday_threshold' => 4.0,
+        ]);
+        $resString->assertSessionHasErrors(['working_day_threshold']);
+    }
+
+    /**
+     * Test Formula Preview and Engine Consistency with Custom Thresholds:
+     */
+    public function test_preview_formula_reflects_custom_threshold_accurately(): void
+    {
+        $customFormula = [
+            'type' => 'add',
+            'break_threshold' => 2.5,
+            'break_duration_per_day' => 0.5,
+            'operands' => [
+                [
+                    'name' => 'first_hours_pay',
+                    'type' => 'multiply',
+                    'operands' => [
+                        ['variable' => 'employee_overtime_rate'],
+                        ['variable' => 'overtime_days'],
+                        ['variable' => 'first_hour_multiplier', 'default' => 1.5],
+                    ],
+                ],
+                [
+                    'name' => 'subsequent_hours_pay',
+                    'type' => 'multiply',
+                    'operands' => [
+                        ['variable' => 'subsequent_overtime_hours'],
+                        ['variable' => 'employee_overtime_rate'],
+                        ['variable' => 'subsequent_hour_multiplier', 'default' => 2.0],
+                    ],
+                ],
+            ],
+        ];
+
+        $preview = $this->overtimeService->getFormulaPreview($customFormula, 'working_day');
+        $this->assertEquals(2.5, $preview['threshold_hours']);
+        $this->assertEquals(150, $preview['threshold_minutes']);
+        $this->assertEquals('>=', $preview['operator']);
+
+        // Verify examples dynamically calculated around 150 min (2:29, 2:30, 2:31, 3:30)
+        $examples = $preview['examples'];
+        $this->assertCount(4, $examples);
+
+        $this->assertEquals('2:29', $examples[0]['time']);
+        $this->assertFalse($examples[0]['deducted']);
+
+        $this->assertEquals('2:30', $examples[1]['time']);
+        $this->assertTrue($examples[1]['deducted']);
+        $this->assertEquals(0.5, $examples[1]['deduction']);
+
+        $this->assertEquals('2:31', $examples[2]['time']);
+        $this->assertTrue($examples[2]['deducted']);
+        $this->assertEquals(0.5, $examples[2]['deduction']);
+    }
 }

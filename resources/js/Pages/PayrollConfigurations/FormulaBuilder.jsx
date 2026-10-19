@@ -37,6 +37,12 @@ export default function FormulaBuilder({
     const [holidayMult, setHolidayMult] = useState(() =>
         extractMultiplier(formula, 'holiday_overtime_multiplier', 2.0)
     );
+    const [breakThreshold, setBreakThreshold] = useState(() => {
+        if (formula?.break_threshold !== undefined && formula?.break_threshold !== null) {
+            return Number(formula.break_threshold);
+        }
+        return isHolidayType ? 4.0 : 3.0;
+    });
 
     // Test calculation simulator state
     const [testRate, setTestRate] = useState(25000);
@@ -54,8 +60,8 @@ export default function FormulaBuilder({
                 name: 'holiday_pay',
                 label: 'Total Lembur Hari Libur',
                 type: 'multiply',
-                break_threshold: 4.0,
-                break_duration_per_day: 1.0,
+                break_threshold: Number(breakThreshold) || 4.0,
+                break_duration_per_day: formula?.break_duration_per_day ? Number(formula.break_duration_per_day) : 1.0,
                 operands: [
                     { variable: 'total_overtime_hours' },
                     { variable: 'employee_overtime_rate' },
@@ -67,8 +73,8 @@ export default function FormulaBuilder({
             const workingAst = {
                 type: 'add',
                 label: 'Total Upah Lembur',
-                break_threshold: 3.0,
-                break_duration_per_day: 0.5,
+                break_threshold: Number(breakThreshold) || 3.0,
+                break_duration_per_day: formula?.break_duration_per_day ? Number(formula.break_duration_per_day) : 0.5,
                 operands: [
                     {
                         name: 'first_hours_pay',
@@ -94,7 +100,7 @@ export default function FormulaBuilder({
             };
             onChange(workingAst);
         }
-    }, [firstHourMult, subsequentHourMult, holidayMult, isHolidayType, readOnly]);
+    }, [firstHourMult, subsequentHourMult, holidayMult, breakThreshold, isHolidayType, readOnly]);
 
     // Local client-side formula evaluation for instant preview & test verification
     const runTestSimulation = () => {
@@ -117,8 +123,9 @@ export default function FormulaBuilder({
         const overtimeMinutes = Math.round(totalHours * 60);
 
         if (isHolidayType) {
-            // Holiday: threshold >= 4.0 jam (>= 240 menit), potongan = days * 1.0 jam
-            const thresholdMinutes = 240;
+            // Holiday: threshold >= breakThreshold jam (>= thresholdMinutes), potongan = days * 1.0 jam
+            const thresholdHours = Number(breakThreshold) || 4.0;
+            const thresholdMinutes = Math.round(thresholdHours * 60);
             const isDeducted = days > 0 && overtimeMinutes >= thresholdMinutes;
             const breakDeductionHours = isDeducted ? days * 1.0 : 0;
             const netHours = Math.max(totalHours - breakDeductionHours, 0);
@@ -134,10 +141,10 @@ export default function FormulaBuilder({
                 isDeducted,
                 steps: [
                     {
-                        label: 'Potongan Istirahat Lembur (≥ 4 jam)',
+                        label: `Potongan Istirahat Lembur (≥ ${thresholdHours} jam)`,
                         detail: isDeducted
-                            ? `Durasi (${totalHours} jam = ${overtimeMinutes} mnt) ≥ 240 mnt: Dipotong ${days} hari × 1.0 jam = ${breakDeductionHours} jam (Jam Bersih = ${netHours} jam)`
-                            : `Durasi (${totalHours} jam = ${overtimeMinutes} mnt) < 240 mnt: Tidak dipotong (Jam Bersih = ${netHours} jam)`,
+                            ? `Durasi (${totalHours} jam = ${overtimeMinutes} mnt) ≥ ${thresholdMinutes} mnt: Dipotong ${days} hari × 1.0 jam = ${breakDeductionHours} jam (Jam Bersih = ${netHours} jam)`
+                            : `Durasi (${totalHours} jam = ${overtimeMinutes} mnt) < ${thresholdMinutes} mnt: Tidak dipotong (Jam Bersih = ${netHours} jam)`,
                     },
                     {
                         label: 'Lembur Hari Libur',
@@ -146,8 +153,9 @@ export default function FormulaBuilder({
                 ],
             });
         } else {
-            // Working day: threshold >= 3.0 jam (>= 180 menit), potongan = days * 0.5 jam
-            const thresholdMinutes = 180;
+            // Working day: threshold >= breakThreshold jam (>= thresholdMinutes), potongan = days * 0.5 jam
+            const thresholdHours = Number(breakThreshold) || 3.0;
+            const thresholdMinutes = Math.round(thresholdHours * 60);
             const isDeducted = days > 0 && overtimeMinutes >= thresholdMinutes;
             const breakDeductionHours = isDeducted ? days * 0.5 : 0;
             const netHours = Math.max(totalHours - breakDeductionHours, 0);
@@ -174,10 +182,10 @@ export default function FormulaBuilder({
                 firstHourUnits,
                 steps: [
                     {
-                        label: 'Potongan Istirahat Lembur (≥ 3 jam)',
+                        label: `Potongan Istirahat Lembur (≥ ${thresholdHours} jam)`,
                         detail: isDeducted
-                            ? `Durasi (${totalHours} jam = ${overtimeMinutes} mnt) ≥ 180 mnt: Dipotong ${days} hari × 0.5 jam = ${breakDeductionHours} jam (Jam Bersih = ${netHours} jam)`
-                            : `Durasi (${totalHours} jam = ${overtimeMinutes} mnt) < 180 mnt: Tidak dipotong (Jam Bersih = ${netHours} jam)`,
+                            ? `Durasi (${totalHours} jam = ${overtimeMinutes} mnt) ≥ ${thresholdMinutes} mnt: Dipotong ${days} hari × 0.5 jam = ${breakDeductionHours} jam (Jam Bersih = ${netHours} jam)`
+                            : `Durasi (${totalHours} jam = ${overtimeMinutes} mnt) < ${thresholdMinutes} mnt: Tidak dipotong (Jam Bersih = ${netHours} jam)`,
                     },
                     {
                         label: 'Jam Pertama',
@@ -196,7 +204,7 @@ export default function FormulaBuilder({
     // Run simulator automatically on mount and whenever parameters change
     useEffect(() => {
         runTestSimulation();
-    }, [firstHourMult, subsequentHourMult, holidayMult, testRate, testDays, testHours, isHolidayType]);
+    }, [firstHourMult, subsequentHourMult, holidayMult, breakThreshold, testRate, testDays, testHours, isHolidayType]);
 
     return (
         <div className="space-y-6">
@@ -328,10 +336,10 @@ export default function FormulaBuilder({
                 {isHolidayType ? (
                     <div className="space-y-2 font-mono text-xs leading-relaxed text-indigo-100">
                         <div className="text-amber-300 font-sans font-semibold">
-                            Ketentuan Potongan Istirahat: Potongan mulai berlaku pada lembur ≥ 4.0 jam (≥ 240 menit).
+                            Ketentuan Potongan Istirahat: Potongan mulai berlaku pada lembur ≥ {breakThreshold} jam (≥ {Math.round(Number(breakThreshold || 4) * 60)} menit).
                         </div>
                         <div className="text-[11px] text-indigo-200">
-                            Contoh: 3:59 (Tidak dipotong) | 4:00 (Dipotong) | 4:01 (Dipotong) | 5:00 (Dipotong)
+                            Contoh: {Math.floor((Math.round(Number(breakThreshold || 4) * 60) - 1) / 60)}:{String((Math.round(Number(breakThreshold || 4) * 60) - 1) % 60).padStart(2, '0')} (Tidak dipotong) | {Math.floor(Math.round(Number(breakThreshold || 4) * 60) / 60)}:{String(Math.round(Number(breakThreshold || 4) * 60) % 60).padStart(2, '0')} (Dipotong) | {Math.floor((Math.round(Number(breakThreshold || 4) * 60) + 1) / 60)}:{String((Math.round(Number(breakThreshold || 4) * 60) + 1) % 60).padStart(2, '0')} (Dipotong)
                         </div>
                         <div className="text-white font-semibold pt-1 border-t border-indigo-800/60">
                             Total Lembur Hari Libur = Total Jam Lembur Bersih × Upah Lembur Karyawan × {holidayMult}
@@ -340,10 +348,10 @@ export default function FormulaBuilder({
                 ) : (
                     <div className="space-y-2 font-mono text-xs leading-relaxed text-indigo-100">
                         <div className="text-amber-300 font-sans font-semibold">
-                            Ketentuan Potongan Istirahat: Potongan mulai berlaku pada lembur ≥ 3.0 jam (≥ 180 menit).
+                            Ketentuan Potongan Istirahat: Potongan mulai berlaku pada lembur ≥ {breakThreshold} jam (≥ {Math.round(Number(breakThreshold || 3) * 60)} menit).
                         </div>
                         <div className="text-[11px] text-indigo-200">
-                            Contoh: 2:59 (Tidak dipotong) | 3:00 (Dipotong) | 3:01 (Dipotong) | 4:00 (Dipotong)
+                            Contoh: {Math.floor((Math.round(Number(breakThreshold || 3) * 60) - 1) / 60)}:{String((Math.round(Number(breakThreshold || 3) * 60) - 1) % 60).padStart(2, '0')} (Tidak dipotong) | {Math.floor(Math.round(Number(breakThreshold || 3) * 60) / 60)}:{String(Math.round(Number(breakThreshold || 3) * 60) % 60).padStart(2, '0')} (Dipotong) | {Math.floor((Math.round(Number(breakThreshold || 3) * 60) + 1) / 60)}:{String((Math.round(Number(breakThreshold || 3) * 60) + 1) % 60).padStart(2, '0')} (Dipotong)
                         </div>
                         <div className="text-white font-semibold pt-1 border-t border-indigo-800/60">
                             Total = Jam Pertama + Jam Berikutnya
