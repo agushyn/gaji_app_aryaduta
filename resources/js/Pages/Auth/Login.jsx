@@ -113,7 +113,7 @@ export default function Login({ status }) {
                 </div>
             </form>
 
-            <div className="mt-6 border-t border-slate-200 pt-5">
+            {/*<div className="mt-6 border-t border-slate-200 pt-5">
                 <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                     Akun Uji Coba Cepat (Seeder)
                 </p>
@@ -160,7 +160,7 @@ export default function Login({ status }) {
                         Coba Akun Nonaktif (inactive@example.com)
                     </button>
                 </div>
-            </div>
+            </div> */}
         </GuestLayout>
     );
 }
