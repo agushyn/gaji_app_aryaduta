@@ -219,6 +219,7 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::get('/settings/whatsapp', [WhatsAppSettingController::class, 'edit'])->name('settings.whatsapp.edit');
         Route::put('/settings/whatsapp', [WhatsAppSettingController::class, 'update'])->name('settings.whatsapp.update');
         Route::post('/settings/whatsapp/test', [WhatsAppSettingController::class, 'testConnection'])->name('settings.whatsapp.test');
+        Route::post('/settings/whatsapp/session-status', [WhatsAppSettingController::class, 'checkSessionStatus'])->name('settings.whatsapp.session-status');
     });
 
     // Audit Logs Viewer

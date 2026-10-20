@@ -28,7 +28,8 @@ interface WhatsAppGatewayInterface
         string $pdfContent,
         string $filename,
         ?string $caption = null,
-        ?string $idempotencyKey = null
+        ?string $idempotencyKey = null,
+        ?string $documentUrl = null
     ): WhatsAppSendResult;
 
     /**

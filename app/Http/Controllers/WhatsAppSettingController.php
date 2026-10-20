@@ -38,13 +38,19 @@ class WhatsAppSettingController extends Controller
         abort_if(! $request->user()->hasPermission('settings.manage'), 403, 'Akses ditolak.');
 
         $validated = $request->validate([
-            'driver' => ['required', 'string', 'in:fonnte,generic,mock'],
+            'driver' => ['required', 'string', 'in:fonnte,generic,mock,openwa'],
             'endpoint' => ['nullable', 'string', 'max:500'],
             'sender_identifier' => ['nullable', 'string', 'max:255'],
+            'session_id' => ['nullable', 'string', 'max:255'],
             'secret' => ['nullable', 'string', 'max:500'],
             'webhook_secret' => ['nullable', 'string', 'max:255'],
             'rate_limit_per_minute' => ['required', 'integer', 'min:1', 'max:120'],
-            'timeout' => ['required', 'integer', 'min:5', 'max:60'],
+            'timeout' => ['required', 'integer', 'min:5', 'max:180'],
+            'connection_timeout' => ['nullable', 'integer', 'min:1', 'max:60'],
+            'request_timeout' => ['nullable', 'integer', 'min:5', 'max:180'],
+            'send_interval_seconds' => ['nullable', 'integer', 'min:1', 'max:60'],
+            'max_retries' => ['nullable', 'integer', 'min:1', 'max:10'],
+            'document_mode' => ['nullable', 'string', 'in:base64,url'],
             'is_active' => ['boolean'],
         ], [
             'driver.required' => 'Pilihan driver gateway WhatsApp wajib ditentukan.',
@@ -56,6 +62,26 @@ class WhatsAppSettingController extends Controller
         $this->whatsAppService->saveConfig($validated, $request->user());
 
         return redirect()->back()->with('success', 'Pengaturan gateway WhatsApp berhasil disimpan.');
+    }
+
+    /**
+     * Check OpenWA session status and connectivity.
+     */
+    public function checkSessionStatus(Request $request): RedirectResponse|JsonResponse
+    {
+        abort_if(! $request->user()->hasPermission('settings.manage'), 403, 'Akses ditolak.');
+
+        $result = $this->whatsAppService->checkSessionStatus();
+
+        if ($request->wantsJson()) {
+            return response()->json($result, $result['success'] ? 200 : 422);
+        }
+
+        if ($result['success']) {
+            return redirect()->back()->with('success', $result['message']);
+        }
+
+        return redirect()->back()->with('error', $result['message']);
     }
 
     /**

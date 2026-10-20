@@ -48,7 +48,8 @@ class MockGateway extends BaseWhatsAppGateway
         string $pdfContent,
         string $filename,
         ?string $caption = null,
-        ?string $idempotencyKey = null
+        ?string $idempotencyKey = null,
+        ?string $documentUrl = null
     ): WhatsAppSendResult {
         if ($this->shouldFail) {
             return WhatsAppSendResult::failure(

@@ -40,7 +40,8 @@ class GenericWebhookGateway extends BaseWhatsAppGateway
         string $pdfContent,
         string $filename,
         ?string $caption = null,
-        ?string $idempotencyKey = null
+        ?string $idempotencyKey = null,
+        ?string $documentUrl = null
     ): WhatsAppSendResult {
         if (! $this->validateConfiguration()) {
             return WhatsAppSendResult::failure(

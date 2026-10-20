@@ -8,6 +8,7 @@ use App\Enums\PayrollPeriodStatus;
 use App\Enums\PayslipStatus;
 use App\Jobs\SendPayslipEmailJob;
 use App\Jobs\SendPayslipWhatsAppJob;
+use App\Models\IntegrationSetting;
 use App\Models\PayrollPeriod;
 use App\Models\Payslip;
 use App\Models\PayslipDelivery;
@@ -90,7 +91,7 @@ class DeliveryService
     /**
      * Queue WhatsApp delivery for an individual finalized payslip.
      */
-    public function queueWhatsAppDelivery(Payslip $payslip, ?User $actor = null): PayslipDelivery
+    public function queueWhatsAppDelivery(Payslip $payslip, ?User $actor = null, int $delaySeconds = 0): PayslipDelivery
     {
         if ($payslip->status !== PayslipStatus::FINALIZED->value) {
             throw new DomainException("Hanya slip gaji yang telah berstatus 'Final' yang dapat dikirimkan ke karyawan.");
@@ -104,7 +105,7 @@ class DeliveryService
         $normalizedPhone = PhoneNumberNormalizer::normalize($rawPhone);
         $idempotencyKey = "wa_{$payslip->id}_{$payslip->payroll_period_id}_".md5($normalizedPhone);
 
-        return DB::transaction(function () use ($payslip, $normalizedPhone, $idempotencyKey, $actor) {
+        return DB::transaction(function () use ($payslip, $normalizedPhone, $idempotencyKey, $actor, $delaySeconds) {
             $delivery = PayslipDelivery::where('payslip_id', $payslip->id)
                 ->where('channel', DeliveryChannel::WHATSAPP->value)
                 ->lockForUpdate()
@@ -136,7 +137,10 @@ class DeliveryService
                 'recipient' => $normalizedPhone,
             ]);
 
-            SendPayslipWhatsAppJob::dispatch($delivery->id);
+            $job = SendPayslipWhatsAppJob::dispatch($delivery->id);
+            if ($delaySeconds > 0) {
+                $job->delay(now()->addSeconds($delaySeconds));
+            }
 
             $this->auditLogService->log(
                 action: 'payslip.delivery_queued',
@@ -208,6 +212,9 @@ class DeliveryService
         $queued = 0;
         $skipped = 0;
 
+        $whatsAppSetting = IntegrationSetting::forProvider('whatsapp');
+        $sendInterval = (int) ($whatsAppSetting->config_json['send_interval_seconds'] ?? 2);
+
         foreach ($payslips as $payslip) {
             $rawPhone = trim((string) ($payslip->phone_snapshot ?? $payslip->employee?->phone));
             if (empty($rawPhone) || ! PhoneNumberNormalizer::isValid($rawPhone)) {
@@ -217,7 +224,8 @@ class DeliveryService
             }
 
             try {
-                $this->queueWhatsAppDelivery($payslip, $actor);
+                $delaySeconds = $queued * $sendInterval;
+                $this->queueWhatsAppDelivery($payslip, $actor, $delaySeconds);
                 $queued++;
             } catch (DomainException) {
                 $skipped++;
@@ -409,6 +417,9 @@ class DeliveryService
         $whatsAppQueued = 0;
         $skipped = 0;
 
+        $whatsAppSetting = IntegrationSetting::forProvider('whatsapp');
+        $sendInterval = (int) ($whatsAppSetting->config_json['send_interval_seconds'] ?? 2);
+
         foreach ($payslips as $payslip) {
             // Email dispatch
             if ($channel === 'email' || $channel === 'both') {
@@ -430,7 +441,8 @@ class DeliveryService
                 $phone = trim((string) ($payslip->phone_snapshot ?? $payslip->employee?->phone));
                 if (! empty($phone) && PhoneNumberNormalizer::isValid($phone)) {
                     try {
-                        $this->queueWhatsAppDelivery($payslip, $actor);
+                        $delaySeconds = $whatsAppQueued * $sendInterval;
+                        $this->queueWhatsAppDelivery($payslip, $actor, $delaySeconds);
                         $whatsAppQueued++;
                     } catch (DomainException) {
                         $skipped++;

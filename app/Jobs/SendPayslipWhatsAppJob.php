@@ -144,12 +144,20 @@ class SendPayslipWhatsAppJob implements ShouldQueue
             $periodMonth = $payslip->period_month_snapshot ?? 'Bulan Ini';
             $caption = "Yth. {$payslip->employee_name_snapshot}, terlampir dokumen resmi Slip Gaji Anda untuk periode {$periodMonth} ({$companyName}). Nomor slip: {$payslip->slip_number}. Dokumen dilindungi stempel integritas SHA-256.";
 
+            // Generate short-lived expiring HMAC signed URL for external gateways supporting URL mode
+            $temporarySignedUrl = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+                'payslips.signed-pdf',
+                now()->addMinutes(30),
+                ['payslip' => $payslip->id]
+            );
+
             $result = $gateway->sendDocument(
                 recipient: $normalizedPhone,
                 pdfContent: $pdfContent,
                 filename: $filename,
                 caption: $caption,
-                idempotencyKey: $delivery->idempotency_key
+                idempotencyKey: $delivery->idempotency_key,
+                documentUrl: $temporarySignedUrl
             );
 
             if ($result->success) {
@@ -181,7 +189,8 @@ class SendPayslipWhatsAppJob implements ShouldQueue
                 );
             } else {
                 $sanitizedError = $this->sanitizeError($result->errorMessage ?? 'Pengiriman ditolak oleh gateway WhatsApp.');
-                $isLastTry = ($this->attempts() >= $this->tries) || ($attemptNumber >= $this->tries);
+                $isPermanent = $this->isPermanentError($result->errorCode);
+                $isLastTry = $isPermanent || ($this->attempts() >= $this->tries) || ($attemptNumber >= $this->tries);
 
                 $attempt->update([
                     'status' => DeliveryStatus::FAILED->value,
@@ -258,6 +267,26 @@ class SendPayslipWhatsAppJob implements ShouldQueue
                 'last_error_summary' => $exception ? $this->sanitizeError($exception->getMessage()) : 'Batas percobaan pengiriman WhatsApp telah tercapai.',
             ]);
         }
+    }
+
+    /**
+     * Determine if the gateway error code represents a permanent failure that should not be retried.
+     */
+    protected function isPermanentError(?string $errorCode): bool
+    {
+        $permanentCodes = [
+            'AUTH_FAILED',
+            'INVALID_API_KEY',
+            'NOT_CONFIGURED',
+            'CONFIG_ERROR',
+            'DOCUMENT_NOT_SUPPORTED',
+            'INVALID_RECIPIENT_PHONE',
+            'NOT_REGISTERED',
+            'NOT_FINALIZED',
+            'INVALID_PAYLOAD',
+        ];
+
+        return in_array($errorCode, $permanentCodes, true);
     }
 
     /**

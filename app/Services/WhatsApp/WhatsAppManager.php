@@ -7,6 +7,7 @@ use App\Services\WhatsApp\Contracts\WhatsAppGatewayInterface;
 use App\Services\WhatsApp\Gateways\FonnteGateway;
 use App\Services\WhatsApp\Gateways\GenericWebhookGateway;
 use App\Services\WhatsApp\Gateways\MockGateway;
+use App\Services\WhatsApp\Gateways\OpenWaGateway;
 use DomainException;
 use Illuminate\Support\Facades\RateLimiter;
 
@@ -51,6 +52,10 @@ class WhatsAppManager
             'secret' => $setting->getDecryptedSecret(),
             'endpoint' => $setting->endpoint,
             'sender' => $setting->sender_identifier,
+            'session_id' => $config['session_id'] ?? ($setting->sender_identifier ?? 'default'),
+            'connection_timeout' => $config['connection_timeout'] ?? 10,
+            'request_timeout' => $config['request_timeout'] ?? ($config['timeout'] ?? 30),
+            'document_mode' => $config['document_mode'] ?? 'base64',
             'webhook_secret' => $config['webhook_secret'] ?? null,
             'timeout' => $config['timeout'] ?? 25,
             'simulate_fail' => $config['simulate_fail'] ?? false,
@@ -65,6 +70,15 @@ class WhatsAppManager
     public function driver(string $driver, array $customConfig = []): WhatsAppGatewayInterface
     {
         return match (strtolower($driver)) {
+            'openwa' => new OpenWaGateway(
+                baseUrl: $customConfig['endpoint'] ?? 'http://localhost:8080/api',
+                apiKey: $customConfig['token'] ?? ($customConfig['secret'] ?? ''),
+                sessionId: $customConfig['session_id'] ?? ($customConfig['sender'] ?? 'default'),
+                connectionTimeout: (int) ($customConfig['connection_timeout'] ?? 10),
+                requestTimeout: (int) ($customConfig['request_timeout'] ?? ($customConfig['timeout'] ?? 30)),
+                documentMode: $customConfig['document_mode'] ?? 'base64',
+                webhookSecret: $customConfig['webhook_secret'] ?? null,
+            ),
             'fonnte' => new FonnteGateway(
                 token: $customConfig['token'] ?? '',
                 endpoint: ! empty($customConfig['endpoint']) ? $customConfig['endpoint'] : 'https://api.fonnte.com/send',

@@ -1,18 +1,25 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, useForm, usePage } from '@inertiajs/react';
+import { Head, router, useForm, usePage } from '@inertiajs/react';
 import {
+    Activity,
     AlertCircle,
     CheckCircle,
+    Clock,
     Copy,
     Eye,
     EyeOff,
+    FileText,
     Info,
     MessageSquare,
+    Radio,
     RefreshCw,
     Save,
     Send,
     ShieldCheck,
     Smartphone,
+    Sliders,
+    Wifi,
+    WifiOff,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -20,16 +27,24 @@ export default function WhatsAppSettings({ config, canManage }) {
     const { auth, flash } = usePage().props;
     const [showSecret, setShowSecret] = useState(false);
     const [copiedWebhook, setCopiedWebhook] = useState(false);
+    const [checkingSession, setCheckingSession] = useState(false);
+    const [sessionStatusResult, setSessionStatusResult] = useState(null);
 
     // Form for WhatsApp Gateway Configuration
     const { data, setData, put, processing, errors } = useForm({
-        driver: config.driver || 'fonnte',
-        endpoint: config.endpoint || 'https://api.fonnte.com/send',
+        driver: config.driver || 'openwa',
+        endpoint: config.endpoint || (config.driver === 'openwa' ? 'http://localhost:3000/api' : 'https://api.fonnte.com/send'),
         sender_identifier: config.sender_identifier || '',
+        session_id: config.session_id || 'default',
         secret: '',
         webhook_secret: '',
         rate_limit_per_minute: config.rate_limit_per_minute || 30,
-        timeout: config.timeout || 25,
+        timeout: config.timeout || 30,
+        connection_timeout: config.connection_timeout || 10,
+        request_timeout: config.request_timeout || 30,
+        send_interval_seconds: config.send_interval_seconds || 2,
+        max_retries: config.max_retries || 3,
+        document_mode: config.document_mode || 'base64',
         is_active: Boolean(config.is_active),
     });
 
@@ -58,6 +73,32 @@ export default function WhatsAppSettings({ config, canManage }) {
         });
     };
 
+    const handleCheckSession = async () => {
+        setCheckingSession(true);
+        try {
+            const response = await fetch(route('settings.whatsapp.session-status'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                },
+            });
+            const result = await response.json();
+            setSessionStatusResult(result);
+        } catch (err) {
+            setSessionStatusResult({
+                success: false,
+                api_connected: false,
+                session_status: 'NETWORK_ERROR',
+                is_ready: false,
+                message: 'Gagal menghubungi server untuk memeriksa status session.',
+            });
+        } finally {
+            setCheckingSession(false);
+        }
+    };
+
     const copyWebhookUrl = () => {
         if (config.webhook_url) {
             navigator.clipboard.writeText(config.webhook_url);
@@ -65,6 +106,12 @@ export default function WhatsAppSettings({ config, canManage }) {
             setTimeout(() => setCopiedWebhook(false), 2000);
         }
     };
+
+    const isOpenWa = data.driver === 'openwa';
+
+    // Current Session Display Status (from live check or persisted config)
+    const currentSessionStatus = sessionStatusResult?.session_status || config.last_session_status || 'UNKNOWN';
+    const isSessionReady = sessionStatusResult ? sessionStatusResult.is_ready : (config.last_session_status === 'CONNECTED');
 
     return (
         <AuthenticatedLayout header="Pengaturan WhatsApp Gateway">
@@ -76,10 +123,10 @@ export default function WhatsAppSettings({ config, canManage }) {
                     <div>
                         <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
                             <Smartphone className="h-6 w-6 text-emerald-600" />
-                            Konfigurasi Gateway WhatsApp Pihak Ketiga
+                            Konfigurasi Gateway WhatsApp & OpenWA
                         </h1>
                         <p className="mt-1 text-xs text-slate-500">
-                            Kelola adapter gateway WhatsApp untuk pengiriman dokumen slip gaji PDF secara terenkripsi dan terlacak.
+                            Kelola provider WhatsApp (OpenWA, Fonnte, Mock) untuk pengiriman dokumen slip gaji PDF secara terenkripsi dan terlacak.
                         </p>
                     </div>
 
@@ -132,7 +179,7 @@ export default function WhatsAppSettings({ config, canManage }) {
                                         Adapter & Kredensial Provider
                                     </h2>
                                     <p className="text-xs text-slate-500 mt-1">
-                                        Sistem menggunakan adapter interface agar vendor gateway dapat diganti tanpa merombak logika bisnis.
+                                        Mendukung OpenWA Official REST API, Fonnte, Generic Webhook, dan Simulator Mock.
                                     </p>
                                 </div>
 
@@ -159,7 +206,7 @@ export default function WhatsAppSettings({ config, canManage }) {
                                     </label>
                                 </div>
 
-                                {/* Driver and Device Sender */}
+                                {/* Driver and Device/Session Identifier */}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -170,17 +217,21 @@ export default function WhatsAppSettings({ config, canManage }) {
                                             disabled={!canManage}
                                             onChange={(e) => {
                                                 const drv = e.target.value;
+                                                let defaultEndpoint = data.endpoint;
+                                                if (drv === 'openwa' && (!defaultEndpoint || defaultEndpoint.includes('fonnte'))) {
+                                                    defaultEndpoint = 'http://localhost:3000/api';
+                                                } else if (drv === 'fonnte' && (!defaultEndpoint || defaultEndpoint.includes('localhost'))) {
+                                                    defaultEndpoint = 'https://api.fonnte.com/send';
+                                                }
                                                 setData((prev) => ({
                                                     ...prev,
                                                     driver: drv,
-                                                    endpoint:
-                                                        drv === 'fonnte'
-                                                            ? 'https://api.fonnte.com/send'
-                                                            : prev.endpoint,
+                                                    endpoint: defaultEndpoint,
                                                 }));
                                             }}
-                                            className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-500"
+                                            className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-500 font-medium"
                                         >
+                                            <option value="openwa">OpenWA (Official WA-Automate REST API Gateway)</option>
                                             <option value="fonnte">Fonnte (Indonesia Gateway Resmi)</option>
                                             <option value="generic">Generic REST / Webhook Gateway</option>
                                             <option value="mock">Mock Simulator (Pengujian Tanpa Biaya)</option>
@@ -192,18 +243,34 @@ export default function WhatsAppSettings({ config, canManage }) {
 
                                     <div>
                                         <label className="block text-xs font-semibold text-slate-700 mb-1">
-                                            Sender ID / Device Token
+                                            {isOpenWa ? 'OpenWA Session ID' : 'Sender ID / Device Token'} <span className="text-rose-500">*</span>
                                         </label>
                                         <input
                                             type="text"
-                                            value={data.sender_identifier}
+                                            value={isOpenWa ? data.session_id : data.sender_identifier}
                                             disabled={!canManage}
-                                            onChange={(e) => setData('sender_identifier', e.target.value)}
-                                            placeholder="contoh: device-01 atau nomor pengirim"
-                                            className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-500"
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                if (isOpenWa) {
+                                                    setData((prev) => ({
+                                                        ...prev,
+                                                        session_id: val,
+                                                        sender_identifier: val,
+                                                    }));
+                                                } else {
+                                                    setData('sender_identifier', val);
+                                                }
+                                            }}
+                                            placeholder={isOpenWa ? 'contoh: default atau payroll_session' : 'contoh: device-01 atau nomor pengirim'}
+                                            className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-500 font-mono"
                                         />
-                                        {errors.sender_identifier && (
-                                            <p className="mt-1 text-xs text-rose-600">{errors.sender_identifier}</p>
+                                        <p className="mt-1 text-[11px] text-slate-400">
+                                            {isOpenWa
+                                                ? 'ID sesi WhatsApp Web yang dijalankan pada daemon OpenWA.'
+                                                : 'Nama atau kode device pada penyedia gateway.'}
+                                        </p>
+                                        {(errors.session_id || errors.sender_identifier) && (
+                                            <p className="mt-1 text-xs text-rose-600">{errors.session_id || errors.sender_identifier}</p>
                                         )}
                                     </div>
                                 </div>
@@ -211,26 +278,31 @@ export default function WhatsAppSettings({ config, canManage }) {
                                 {/* Endpoint URL */}
                                 <div>
                                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                                        URL Endpoint API Gateway
+                                        URL Base Endpoint API Gateway <span className="text-rose-500">*</span>
                                     </label>
                                     <input
                                         type="url"
                                         value={data.endpoint}
                                         disabled={!canManage}
                                         onChange={(e) => setData('endpoint', e.target.value)}
-                                        placeholder="https://api.fonnte.com/send"
-                                        className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-500"
+                                        placeholder={isOpenWa ? 'http://localhost:3000/api atau https://wa-gateway.example.com/api' : 'https://api.fonnte.com/send'}
+                                        className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-500 font-mono"
                                     />
+                                    <p className="mt-1 text-[11px] text-slate-400">
+                                        {isOpenWa
+                                            ? 'Base URL OpenWA REST API server (dikirim dengan header X-API-Key).'
+                                            : 'URL endpoint pengiriman pesan provider.'}
+                                    </p>
                                     {errors.endpoint && (
                                         <p className="mt-1 text-xs text-rose-600">{errors.endpoint}</p>
                                     )}
                                 </div>
 
-                                {/* Secret Token with Masking */}
+                                {/* Secret Token / API Key with Masking */}
                                 <div>
                                     <div className="flex items-center justify-between mb-1">
                                         <label className="block text-xs font-semibold text-slate-700">
-                                            Token Rahasia / API Secret
+                                            {isOpenWa ? 'OpenWA API Key (X-API-Key)' : 'Token Rahasia / API Secret'}
                                         </label>
                                         {config.has_secret && (
                                             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
@@ -248,7 +320,7 @@ export default function WhatsAppSettings({ config, canManage }) {
                                             placeholder={
                                                 config.has_secret
                                                     ? '•••••••• (Biarkan kosong jika tidak ingin mengubah)'
-                                                    : 'Masukkan API Token dari penyedia WhatsApp'
+                                                    : (isOpenWa ? 'Masukkan API Key OpenWA' : 'Masukkan API Token dari penyedia WhatsApp')
                                             }
                                             className="w-full rounded-xl border border-slate-200 pl-3.5 pr-10 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-500 font-mono"
                                         />
@@ -266,14 +338,97 @@ export default function WhatsAppSettings({ config, canManage }) {
                                         </button>
                                     </div>
                                     <p className="mt-1 text-[11px] text-slate-400">
-                                        Token dienkripsi AES-256 dan tidak pernah dikirimkan mentah ke browser.
+                                        Kredensial dienkripsi AES-256 pada server dan tidak pernah diekspos utuh ke browser atau response API.
                                     </p>
                                     {errors.secret && (
                                         <p className="mt-1 text-xs text-rose-600">{errors.secret}</p>
                                     )}
                                 </div>
 
-                                {/* Rate Limiting & Timeout */}
+                                {/* OpenWA Advanced Options (Document Delivery Mode & Intervals) */}
+                                {isOpenWa && (
+                                    <div className="border-t border-slate-100 pt-4 space-y-4">
+                                        <div className="flex items-center gap-2">
+                                            <Sliders className="h-4 w-4 text-emerald-600" />
+                                            <h3 className="text-xs font-semibold text-slate-800 uppercase tracking-wider">
+                                                Pengaturan Spesifik OpenWA & Optimasi Throughput
+                                            </h3>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            {/* Document Delivery Mode */}
+                                            <div>
+                                                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                                    Mode Pengiriman Dokumen PDF
+                                                </label>
+                                                <select
+                                                    value={data.document_mode}
+                                                    disabled={!canManage}
+                                                    onChange={(e) => setData('document_mode', e.target.value)}
+                                                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
+                                                >
+                                                    <option value="base64">Base64 Data URI (Mandiri & Direkomendasikan)</option>
+                                                    <option value="url">URL Bertanda Tangan Sementara (Expiring HMAC)</option>
+                                                </select>
+                                                <p className="mt-1 text-[11px] text-slate-400 leading-normal">
+                                                    Base64 tidak membutuhkan OpenWA dapat mengakses balik server Laravel melalui jaringan publik.
+                                                </p>
+                                            </div>
+
+                                            {/* Send Interval */}
+                                            <div>
+                                                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                                    Jeda Antar-Pesan Massal (Detik)
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    max="60"
+                                                    value={data.send_interval_seconds}
+                                                    disabled={!canManage}
+                                                    onChange={(e) => setData('send_interval_seconds', Math.max(1, parseInt(e.target.value) || 2))}
+                                                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
+                                                />
+                                                <p className="mt-1 text-[11px] text-slate-400 leading-normal">
+                                                    Memberi jarak waktu antar slip pada antrean massal untuk mencegah pemblokiran oleh WhatsApp.
+                                                </p>
+                                            </div>
+
+                                            {/* Connection & Request Timeouts */}
+                                            <div>
+                                                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                                    Connection Timeout (Detik)
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    max="60"
+                                                    value={data.connection_timeout}
+                                                    disabled={!canManage}
+                                                    onChange={(e) => setData('connection_timeout', parseInt(e.target.value) || 10)}
+                                                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                                    Request Timeout Dokumen (Detik)
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min="5"
+                                                    max="180"
+                                                    value={data.request_timeout}
+                                                    disabled={!canManage}
+                                                    onChange={(e) => setData('request_timeout', parseInt(e.target.value) || 30)}
+                                                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Rate Limiting & General Timeout */}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-100 pt-4">
                                     <div>
                                         <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -291,30 +446,33 @@ export default function WhatsAppSettings({ config, canManage }) {
                                             className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
                                         />
                                         <p className="mt-1 text-[11px] text-slate-400">
-                                            Mencegah pemblokiran nomor oleh WhatsApp akibat pengiriman terlalu cepat.
+                                            Mencegah lonjakan trafik pengiriman yang berlebihan ke gateway.
                                         </p>
                                     </div>
 
                                     <div>
                                         <label className="block text-xs font-semibold text-slate-700 mb-1">
-                                            Waktu Batas Koneksi (Timeout Detik)
+                                            Maksimum Percobaan Ulang (Retry Count)
                                         </label>
                                         <input
                                             type="number"
-                                            min="5"
-                                            max="60"
-                                            value={data.timeout}
+                                            min="1"
+                                            max="10"
+                                            value={data.max_retries}
                                             disabled={!canManage}
-                                            onChange={(e) => setData('timeout', parseInt(e.target.value) || 25)}
+                                            onChange={(e) => setData('max_retries', parseInt(e.target.value) || 3)}
                                             className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
                                         />
+                                        <p className="mt-1 text-[11px] text-slate-400">
+                                            Job antrean akan mencoba ulang secara bertahap dengan backoff jika terjadi gangguan sementara.
+                                        </p>
                                     </div>
                                 </div>
 
                                 {/* Webhook Callback Secret */}
                                 <div className="border-t border-slate-100 pt-4">
                                     <h3 className="text-xs font-semibold text-slate-800 uppercase tracking-wider mb-2">
-                                        Keamanan Webhook Callback
+                                        Keamanan Webhook Callback & DLR
                                     </h3>
                                     <p className="text-xs text-slate-500 mb-3">
                                         Token rahasia untuk memvalidasi tanda tangan laporan status (DLR) dari gateway WhatsApp.
@@ -355,32 +513,114 @@ export default function WhatsAppSettings({ config, canManage }) {
                         </div>
                     </div>
 
-                    {/* Sidebar: Test Connection & Webhook Info (1 Col) */}
+                    {/* Sidebar: OpenWA Status, Test Connection & Webhook Info (1 Col) */}
                     <div className="space-y-6">
+                        {/* OpenWA Live Session Status Card */}
+                        {isOpenWa && (
+                            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Radio className="h-5 w-5 text-emerald-600" />
+                                        <h2 className="text-sm font-bold text-slate-800">
+                                            Status Session OpenWA
+                                        </h2>
+                                    </div>
+                                    <span
+                                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                                            isSessionReady
+                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                : currentSessionStatus === 'PAIRING'
+                                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                                : 'bg-slate-100 text-slate-700 border-slate-200'
+                                        }`}
+                                    >
+                                        <span
+                                            className={`h-1.5 w-1.5 rounded-full ${
+                                                isSessionReady ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                                            }`}
+                                        />
+                                        {currentSessionStatus}
+                                    </span>
+                                </div>
+
+                                <p className="text-xs text-slate-500 leading-relaxed">
+                                    Membedakan antara respons koneksi HTTP API gateway dan status kesiapan session WhatsApp Web (ready to send).
+                                </p>
+
+                                {sessionStatusResult && (
+                                    <div
+                                        className={`rounded-xl border p-3 text-xs ${
+                                            sessionStatusResult.is_ready
+                                                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                                                : sessionStatusResult.api_connected
+                                                ? 'bg-amber-50 border-amber-200 text-amber-800'
+                                                : 'bg-rose-50 border-rose-200 text-rose-800'
+                                        }`}
+                                    >
+                                        <div className="font-semibold flex items-center gap-1.5">
+                                            {sessionStatusResult.is_ready ? (
+                                                <Wifi className="h-4 w-4 text-emerald-600" />
+                                            ) : (
+                                                <WifiOff className="h-4 w-4" />
+                                            )}
+                                            {sessionStatusResult.is_ready
+                                                ? 'Session Terhubung & Siap Kirim'
+                                                : sessionStatusResult.api_connected
+                                                ? 'API Terhubung, Session Belum Siap'
+                                                : 'Gagal Terhubung ke API OpenWA'}
+                                        </div>
+                                        <p className="mt-1 text-[11px] leading-relaxed">
+                                            {sessionStatusResult.message}
+                                        </p>
+                                    </div>
+                                )}
+
+                                <button
+                                    type="button"
+                                    onClick={handleCheckSession}
+                                    disabled={checkingSession || !canManage}
+                                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50 transition"
+                                >
+                                    {checkingSession ? (
+                                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                        <Activity className="h-3.5 w-3.5 text-emerald-600" />
+                                    )}
+                                    Periksa Status Session WhatsApp
+                                </button>
+
+                                {config.last_session_checked_at && (
+                                    <p className="text-[11px] text-slate-400 text-center">
+                                        Pengecekan terakhir: {config.last_session_checked_at}
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
                         {/* Test Connection Card */}
                         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
                             <div className="flex items-center gap-2 mb-3">
                                 <MessageSquare className="h-5 w-5 text-emerald-600" />
                                 <h2 className="text-sm font-bold text-slate-800">
-                                    Uji Koneksi Gateway
+                                    Uji Koneksi Pesan Teks
                                 </h2>
                             </div>
 
                             <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-                                Kirim pesan teks uji coba ke nomor WhatsApp tujuan untuk memverifikasi token dan koneksi server.
+                                Kirim pesan teks uji coba ke nomor WhatsApp tujuan untuk memverifikasi API Key dan koneksi gateway aktif.
                             </p>
 
                             <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 mb-4 text-xs text-blue-800 flex items-start gap-2">
                                 <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
                                 <p>
-                                    <strong>Prinsip Keamanan:</strong> Uji coba koneksi hanya mengirimkan pesan ping verifikasi sederhana. Tidak ada data gaji atau informasi rahasia karyawan yang dikirimkan.
+                                    <strong>Prinsip Keamanan:</strong> Uji coba koneksi hanya mengirimkan teks ping verifikasi. Tidak ada data gaji atau informasi rahasia karyawan yang dikirimkan.
                                 </p>
                             </div>
 
                             <form onSubmit={handleTest} className="space-y-3">
                                 <div>
                                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                                        Nomor WhatsApp Uji Coba
+                                        Nomor WhatsApp Uji Coba (Admin)
                                     </label>
                                     <input
                                         type="tel"
@@ -437,7 +677,7 @@ export default function WhatsAppSettings({ config, canManage }) {
                                 URL Webhook Laporan Status (DLR)
                             </h3>
                             <p className="text-xs text-slate-500 leading-relaxed">
-                                Daftarkan URL berikut pada panel kontrol provider WhatsApp Anda agar status pengiriman terupdate otomatis menjadi &quot;Diterima&quot; (Delivered).
+                                Daftarkan URL berikut pada panel OpenWA / Gateway agar status pengiriman terupdate otomatis menjadi &quot;Diterima&quot; (Delivered) saat ada event ack dari WhatsApp.
                             </p>
                             <div className="flex items-center gap-2">
                                 <input
@@ -465,13 +705,13 @@ export default function WhatsAppSettings({ config, canManage }) {
                         <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5 text-xs text-slate-600 space-y-2.5">
                             <div className="flex items-center gap-2 text-slate-800 font-semibold">
                                 <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                                Kepatuhan & Privasi
+                                Kepatuhan & Keamanan Slip Gaji
                             </div>
                             <ul className="list-disc pl-4 space-y-1.5 text-slate-500">
-                                <li>Dokumen PDF dilampirkan langsung atau melalui URL privat yang kedaluwarsa secara otomatis.</li>
-                                <li>Pesan teks tidak memuat rincian nominal gaji guna melindungi privasi di layar notifikasi ponsel.</li>
-                                <li>Status terkirim tidak otomatis dianggap &quot;Diterima&quot; sebelum bukti DLR diterima dari provider.</li>
-                                <li>Nomor telepon dinormalisasi ke format internasional standar (628...).</li>
+                                <li>Slip PDF final dikirim langsung via OpenWA (Base64 atau Signed URL sementara yang aman).</li>
+                                <li>Pesan pengantar tidak memuat nominal gaji untuk menjaga privasi di layar notifikasi karyawan.</li>
+                                <li>Status terkirim gateway dicatat terpisah dari bukti pesan dibaca (Read).</li>
+                                <li>Nomor tujuan otomatis dinormalisasi ke format internasional (628...).</li>
                             </ul>
                         </div>
                     </div>
