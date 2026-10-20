@@ -87,29 +87,34 @@ export default function ApprovalPeriodShow({
     return (
         <AuthenticatedLayout
             title={`Review Penggajian Periode ${period.period_code}`}
-            header={
+            header={`Review Periode: ${period.period_code}`}
+        >
+            <Head title={`Review Penggajian: ${period.period_code}`} />
+
+            <div className="space-y-6">
+                {/* Header Action Bar */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div className="flex items-center gap-3">
                         <Link
                             href={route('approvals.index')}
-                            className="p-2 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
+                            className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition shadow-xs shrink-0"
                             title="Kembali ke Daftar Review"
                         >
                             <ArrowLeft className="h-5 w-5" />
                         </Link>
                         <div>
                             <div className="flex items-center gap-2">
-                                <h2 className="text-xl font-bold text-slate-900 leading-tight">
+                                <h1 className="text-xl font-bold text-slate-900 tracking-tight">
                                     Review Periode: {period.period_code}
-                                </h2>
+                                </h1>
                                 <span
                                     className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${period.badge_class}`}
                                 >
                                     {period.status_label}
                                 </span>
                             </div>
-                            <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
-                                <Calendar className="h-3.5 w-3.5" />
+                            <p className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-2">
+                                <Calendar className="h-3.5 w-3.5 shrink-0" />
                                 <span>
                                     Rentang: {period.start_date} s/d {period.end_date}
                                 </span>
@@ -123,7 +128,7 @@ export default function ApprovalPeriodShow({
                     <div className="flex flex-wrap items-center gap-2">
                         <a
                             href={route('approvals.periods.export-excel', period.id)}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-800 transition shadow-xs"
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-800 transition shadow-xs"
                             title="Export Rekap Payroll Excel (.xlsx)"
                         >
                             <FileSpreadsheet className="h-4 w-4" />
@@ -134,7 +139,7 @@ export default function ApprovalPeriodShow({
                             <button
                                 type="button"
                                 onClick={() => setSubmitModalOpen(true)}
-                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0B57D0] text-white text-xs font-semibold hover:bg-[#0A58CA] transition shadow-xs"
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0B57D0] text-white text-xs font-semibold hover:bg-[#0A58CA] transition shadow-xs"
                             >
                                 <UserCheck className="h-4 w-4" />
                                 <span>Ajukan untuk Review</span>
@@ -145,7 +150,7 @@ export default function ApprovalPeriodShow({
                             <button
                                 type="button"
                                 onClick={() => setChangesModalOpen(true)}
-                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 transition shadow-xs"
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 transition shadow-xs"
                             >
                                 <AlertCircle className="h-4 w-4" />
                                 <span>Minta Perbaikan (Reject/Revisi)</span>
@@ -156,7 +161,7 @@ export default function ApprovalPeriodShow({
                             <button
                                 type="button"
                                 onClick={() => setApproveModalOpen(true)}
-                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition shadow-xs"
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition shadow-xs"
                             >
                                 <ShieldCheck className="h-4 w-4" />
                                 <span>Setujui Periode (Approve)</span>
@@ -175,7 +180,7 @@ export default function ApprovalPeriodShow({
                                         router.post(route('payroll-periods.finalize', period.id));
                                     }
                                 }}
-                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition shadow-xs"
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition shadow-xs"
                             >
                                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                                 <span>Finalisasi Seluruh Periode & Buat PDF</span>
@@ -183,18 +188,13 @@ export default function ApprovalPeriodShow({
                         )}
 
                         {period.status === 'finalized' && (
-                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
                                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                                 <span>Final ({period.finalizer_name || 'Petugas'} - {period.finalized_at})</span>
                             </div>
                         )}
                     </div>
                 </div>
-            }
-        >
-            <Head title={`Review Penggajian: ${period.period_code}`} />
-
-            <div className="max-w-7xl mx-auto space-y-6">
                 {/* Segregation of Duties Warning Banner */}
                 {isCreatorOrSubmitter && segregationEnforced && period.status === 'in_review' && (
                     <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3">

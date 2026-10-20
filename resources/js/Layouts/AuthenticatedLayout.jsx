@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-export default function AuthenticatedLayout({ title, header, children }) {
+export default function AuthenticatedLayout({ title, header, children, fullWidth = false }) {
     const { auth, flash, appName } = usePage().props;
     const user = auth.user;
 
@@ -537,9 +537,19 @@ export default function AuthenticatedLayout({ title, header, children }) {
                             <Menu className="h-5 w-5" />
                         </button>
 
-                        <h1 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
-                            {header || title || 'Portal Personalia'}
-                        </h1>
+                        {typeof header === 'string' || (!header && typeof title === 'string') ? (
+                            <h1 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight truncate">
+                                {header || title || 'Portal Personalia'}
+                            </h1>
+                        ) : (
+                            <div className="flex items-center min-w-0">
+                                {header || title || (
+                                    <h1 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight truncate">
+                                        Portal Personalia
+                                    </h1>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Top Right User Profile Dropdown */}
@@ -606,10 +616,15 @@ export default function AuthenticatedLayout({ title, header, children }) {
                     </div>
                 </header>
 
-                {/* Flash Messages */}
-                {flashVisible && flash?.success && (
-                    <div className="mx-4 sm:mx-6 lg:mx-8 mt-4">
-                        <div className="flex items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs sm:text-sm text-emerald-900 shadow-xs">
+                {/* Page Main Content */}
+                <main
+                    className={`flex-1 px-4 sm:px-6 lg:px-8 py-6 sm:py-8 w-full mx-auto ${
+                        fullWidth ? 'max-w-full' : 'max-w-7xl'
+                    }`}
+                >
+                    {/* Flash Messages */}
+                    {flashVisible && flash?.success && (
+                        <div className="mb-6 flex items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3.5 text-xs sm:text-sm text-emerald-900 shadow-xs">
                             <div className="flex items-center gap-2.5">
                                 <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
                                 <span>{flash.success}</span>
@@ -617,18 +632,16 @@ export default function AuthenticatedLayout({ title, header, children }) {
                             <button
                                 type="button"
                                 onClick={() => setFlashVisible(false)}
-                                className="rounded-lg p-1 text-emerald-700 hover:bg-emerald-100"
+                                className="rounded-lg p-1 text-emerald-700 hover:bg-emerald-100 transition"
                                 aria-label="Tutup notifikasi"
                             >
                                 <X className="h-4 w-4" />
                             </button>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {flashVisible && flash?.error && (
-                    <div className="mx-4 sm:mx-6 lg:mx-8 mt-4">
-                        <div className="flex items-center justify-between rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs sm:text-sm text-rose-900 shadow-xs">
+                    {flashVisible && flash?.error && (
+                        <div className="mb-6 flex items-center justify-between rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3.5 text-xs sm:text-sm text-rose-900 shadow-xs">
                             <div className="flex items-center gap-2.5">
                                 <ShieldAlert className="h-4 w-4 text-rose-600 shrink-0" />
                                 <span>{flash.error}</span>
@@ -636,17 +649,16 @@ export default function AuthenticatedLayout({ title, header, children }) {
                             <button
                                 type="button"
                                 onClick={() => setFlashVisible(false)}
-                                className="rounded-lg p-1 text-rose-700 hover:bg-rose-100"
+                                className="rounded-lg p-1 text-rose-700 hover:bg-rose-100 transition"
                                 aria-label="Tutup notifikasi"
                             >
                                 <X className="h-4 w-4" />
                             </button>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {/* Page Main Content */}
-                <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">{children}</main>
+                    {children}
+                </main>
             </div>
         </div>
     );

@@ -24,22 +24,25 @@ export default function ApprovalsIndex({ periods, metrics, currentTab, canDecide
     return (
         <AuthenticatedLayout
             title="Pusat Review & Persetujuan Penggajian"
-            header={
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            header="Pusat Review & Persetujuan"
+        >
+            <Head title="Pusat Review & Persetujuan Penggajian" />
+
+            <div className="space-y-6">
+                {/* Header Action Bar */}
+                <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-xl bg-blue-50 text-[#0B57D0] shrink-0">
+                        <ShieldCheck className="h-6 w-6" />
+                    </div>
                     <div>
-                        <h2 className="text-xl font-bold text-slate-900 leading-tight">
+                        <h1 className="text-xl font-bold text-slate-900 tracking-tight">
                             Pusat Review & Persetujuan
-                        </h2>
-                        <p className="text-xs text-slate-500 mt-1">
+                        </h1>
+                        <p className="text-xs text-slate-500 mt-0.5">
                             Verifikasi berkas penggajian, rincian penghasilan, dan otorisasi persetujuan manajerial.
                         </p>
                     </div>
                 </div>
-            }
-        >
-            <Head title="Pusat Review & Persetujuan Penggajian" />
-
-            <div className="max-w-7xl mx-auto space-y-6">
                 {/* Metric Summary Cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <button

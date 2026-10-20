@@ -68,35 +68,34 @@ export default function PayrollConfigurationsEdit({
     return (
         <AuthenticatedLayout
             title={`Edit Konfigurasi - ${config.name}`}
-            header={
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                        <Link
-                            href={route('payroll-configurations.index')}
-                            className="p-1.5 text-slate-500 hover:text-slate-800 bg-white border border-slate-200 rounded-lg transition"
-                        >
-                            <ArrowLeft className="w-4 h-4" />
-                        </Link>
-                        <div>
-                            <div className="flex items-center space-x-2">
-                                <h2 className="text-xl font-bold text-slate-800">
-                                    Edit Konfigurasi: {config.name}
-                                </h2>
-                                <span className="px-2.5 py-0.5 bg-purple-100 text-purple-700 font-mono text-xs font-bold rounded-full">
-                                    Versi Aktif: v{config.current_version}
-                                </span>
-                            </div>
-                            <p className="text-xs text-slate-500">
-                                Setiap perubahan rumus akan otomatis membuat versi baru guna menjaga integritas audit payroll finalized.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            }
+            header={`Edit Konfigurasi: ${config.name}`}
         >
             <Head title={`Edit Konfigurasi - ${config.name}`} />
 
             <div className="max-w-4xl mx-auto space-y-6">
+                {/* Header Action Bar */}
+                <div className="flex items-center gap-3">
+                    <Link
+                        href={route('payroll-configurations.index')}
+                        className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition shadow-xs"
+                        title="Kembali ke Daftar Konfigurasi"
+                    >
+                        <ArrowLeft className="h-5 w-5" />
+                    </Link>
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+                                Edit Konfigurasi: {config.name}
+                            </h1>
+                            <span className="px-2.5 py-0.5 bg-purple-100 text-purple-700 font-mono text-xs font-bold rounded-full border border-purple-200">
+                                v{config.current_version}
+                            </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                            Setiap perubahan rumus akan otomatis membuat versi baru guna menjaga integritas audit payroll finalized.
+                        </p>
+                    </div>
+                </div>
                 {/* Navigation Tabs */}
                 <div className="flex space-x-2 border-b border-slate-200 pb-2">
                     <button

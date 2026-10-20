@@ -147,7 +147,7 @@ export default function DivisionsIndex({ divisions, offices, departments, counts
         >
             <Head title="Master Divisi" />
 
-            <div className="space-y-6 p-4 sm:p-6 lg:p-8">
+            <div className="space-y-6">
                 {/* Header Title & Action Button */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>

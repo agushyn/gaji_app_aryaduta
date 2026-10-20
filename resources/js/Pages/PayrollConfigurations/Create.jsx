@@ -51,30 +51,30 @@ export default function PayrollConfigurationsCreate({
     return (
         <AuthenticatedLayout
             title="Tambah Konfigurasi Perhitungan Payroll"
-            header={
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                        <Link
-                            href={route('payroll-configurations.index')}
-                            className="p-1.5 text-slate-500 hover:text-slate-800 bg-white border border-slate-200 rounded-lg transition"
-                        >
-                            <ArrowLeft className="w-4 h-4" />
-                        </Link>
-                        <div>
-                            <h2 className="text-xl font-bold text-slate-800">
-                                Buat Konfigurasi Perhitungan Payroll
-                            </h2>
-                            <p className="text-xs text-slate-500">
-                                Buat aturan perhitungan formula baru untuk komponen penggajian.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            }
+            header="Buat Konfigurasi Perhitungan Payroll"
         >
             <Head title="Tambah Konfigurasi Payroll" />
 
-            <div className="max-w-4xl mx-auto">
+            <div className="max-w-4xl mx-auto space-y-6">
+                {/* Header Action Bar */}
+                <div className="flex items-center gap-3">
+                    <Link
+                        href={route('payroll-configurations.index')}
+                        className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition shadow-xs"
+                        title="Kembali ke Daftar Konfigurasi"
+                    >
+                        <ArrowLeft className="h-5 w-5" />
+                    </Link>
+                    <div>
+                        <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+                            Buat Konfigurasi Perhitungan Payroll
+                        </h1>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                            Buat aturan perhitungan formula baru untuk komponen penggajian.
+                        </p>
+                    </div>
+                </div>
+
                 <form onSubmit={handleSubmit} className="space-y-6">
                     {/* General Configuration Card */}
                     <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">

@@ -214,46 +214,52 @@ export default function PayrollConfigurationsIndex({
     return (
         <AuthenticatedLayout
             title="Konfigurasi Perhitungan Payroll"
-            header={
+            header="Konfigurasi Perhitungan Payroll"
+        >
+            <Head title="Konfigurasi Perhitungan Payroll" />
+
+            <div className="space-y-6">
+                {/* Header Action Bar */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div>
-                        <h2 className="text-xl font-bold text-slate-800">
-                            Konfigurasi Perhitungan Payroll
-                        </h2>
-                        <p className="text-xs text-slate-500 mt-1">
-                            Atur logic perhitungan lembur, formula fleksibel, dan versi formula per jenis hari.
-                        </p>
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-blue-50 text-[#0B57D0] shrink-0">
+                            <Sliders className="h-6 w-6" />
+                        </div>
+                        <div>
+                            <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+                                Konfigurasi Perhitungan Payroll
+                            </h1>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                                Atur logic perhitungan lembur, formula fleksibel, dan versi formula per jenis hari.
+                            </p>
+                        </div>
                     </div>
                     {can('payroll.configuration.create') && (
                         <Link
                             href={route('payroll-configurations.create')}
-                            className="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition"
+                            className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#0B57D0] hover:bg-[#0A58CA] text-white text-xs font-semibold rounded-xl shadow-xs transition"
                         >
-                            <Plus className="w-4 h-4 mr-1.5" />
+                            <Plus className="h-4 w-4" />
                             Tambah Konfigurasi
                         </Link>
                     )}
                 </div>
-            }
-        >
-            <Head title="Konfigurasi Perhitungan Payroll" />
 
-            <div className="max-w-7xl mx-auto space-y-6">
                 {/* Stats Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
                         <div className="text-xs text-slate-500 font-medium">Total Aturan</div>
-                        <div className="text-2xl font-bold text-slate-800 mt-1">{counts.total}</div>
+                        <div className="text-2xl font-bold text-slate-900 mt-1">{counts.total}</div>
                     </div>
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
                         <div className="text-xs text-emerald-600 font-medium">Aturan Aktif</div>
                         <div className="text-2xl font-bold text-emerald-700 mt-1">{counts.active}</div>
                     </div>
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                        <div className="text-xs text-indigo-600 font-medium">Hari Kerja</div>
-                        <div className="text-2xl font-bold text-indigo-700 mt-1">{counts.working_day}</div>
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+                        <div className="text-xs text-blue-600 font-medium">Hari Kerja</div>
+                        <div className="text-2xl font-bold text-blue-700 mt-1">{counts.working_day}</div>
                     </div>
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
                         <div className="text-xs text-amber-600 font-medium">Hari Libur</div>
                         <div className="text-2xl font-bold text-amber-700 mt-1">{counts.holiday}</div>
                     </div>
@@ -482,22 +488,22 @@ export default function PayrollConfigurationsIndex({
                             </div>
 
                             {can('payroll.configuration.update') ? (
-                                <div className="flex items-center space-x-2">
+                                <div className="flex items-center gap-2">
                                     <button
                                         type="button"
                                         onClick={handleResetDefaults}
                                         disabled={isSavingSettings}
-                                        className="inline-flex items-center px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition disabled:opacity-50"
+                                        className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition disabled:opacity-50"
                                     >
-                                        <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                                        <RotateCcw className="w-3.5 h-3.5" />
                                         Reset Default
                                     </button>
                                     <button
                                         type="submit"
                                         disabled={isSavingSettings}
-                                        className="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition disabled:opacity-50"
+                                        className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#0B57D0] hover:bg-[#0A58CA] text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50"
                                     >
-                                        <Save className="w-3.5 h-3.5 mr-1.5" />
+                                        <Save className="w-3.5 h-3.5" />
                                         {isSavingSettings ? 'Menyimpan...' : 'Simpan Pengaturan Lembur'}
                                     </button>
                                 </div>

@@ -180,17 +180,27 @@ export default function HolidayCalendarsIndex({
     return (
         <AuthenticatedLayout
             title="Kalender Libur Indonesia"
-            header={
+            header="Kalender Libur Indonesia"
+        >
+            <Head title="Kalender Libur Indonesia" />
+
+            <div className="space-y-6">
+                {/* Header Action Bar */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div>
-                        <h2 className="text-xl font-bold text-slate-800">
-                            Kalender Libur Nasional & Cuti Bersama
-                        </h2>
-                        <p className="text-xs text-slate-500 mt-1">
-                            Disimpan secara lokal di database (bebas downtime API saat hitung payroll) dengan acuan SKB 3 Menteri.
-                        </p>
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-blue-50 text-[#0B57D0] shrink-0">
+                            <CalendarCheck className="h-6 w-6" />
+                        </div>
+                        <div>
+                            <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+                                Kalender Libur Nasional & Cuti Bersama
+                            </h1>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                                Disimpan secara lokal di database (bebas downtime API saat hitung payroll) dengan acuan SKB 3 Menteri.
+                            </p>
+                        </div>
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         {can('payroll.holiday.sync') && (
                             <button
                                 type="button"
@@ -198,9 +208,9 @@ export default function HolidayCalendarsIndex({
                                     setSyncYear(year);
                                     setSyncModalOpen(true);
                                 }}
-                                className="inline-flex items-center px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-sm transition"
+                                className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl shadow-xs transition"
                             >
-                                <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                                <RefreshCw className="h-4 w-4" />
                                 Sync Kalender
                             </button>
                         )}
@@ -208,38 +218,34 @@ export default function HolidayCalendarsIndex({
                             <button
                                 type="button"
                                 onClick={openCreateModal}
-                                className="inline-flex items-center px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition"
+                                className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#0B57D0] hover:bg-[#0A58CA] text-white text-xs font-semibold rounded-xl shadow-xs transition"
                             >
-                                <Plus className="w-4 h-4 mr-1.5" />
+                                <Plus className="h-4 w-4" />
                                 Tambah Libur
                             </button>
                         )}
                     </div>
                 </div>
-            }
-        >
-            <Head title="Kalender Libur Indonesia" />
 
-            <div className="max-w-7xl mx-auto space-y-6">
                 {/* Stats & Last Synced Info */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
                         <div className="text-xs text-slate-500 font-medium">Tahun Terpilih</div>
-                        <div className="text-2xl font-bold text-slate-800 mt-1">{selectedYear}</div>
+                        <div className="text-2xl font-bold text-slate-900 mt-1">{selectedYear}</div>
                     </div>
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
                         <div className="text-xs text-blue-600 font-medium">Libur Nasional</div>
                         <div className="text-2xl font-bold text-blue-700 mt-1">{counts.national}</div>
                     </div>
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
                         <div className="text-xs text-amber-600 font-medium">Cuti Bersama</div>
                         <div className="text-2xl font-bold text-amber-700 mt-1">{counts.joint_leave}</div>
                     </div>
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
                         <div className="text-xs text-emerald-600 font-medium">Libur Payroll</div>
                         <div className="text-2xl font-bold text-emerald-700 mt-1">{counts.payroll_holiday}</div>
                     </div>
-                    <div className="col-span-2 md:col-span-1 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="col-span-2 md:col-span-1 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
                         <div className="text-xs text-slate-400 font-medium">Terakhir Sync</div>
                         <div className="text-xs font-bold text-slate-700 mt-2 truncate">
                             {lastSyncedAt || 'Belum pernah sync'}

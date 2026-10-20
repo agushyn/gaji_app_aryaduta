@@ -222,32 +222,38 @@ export default function SecurityPayrollIndex({
     return (
         <AuthenticatedLayout
             title="Perhitungan Payroll Khusus Security"
-            header={
+            header="Payroll Khusus Security"
+            fullWidth={true}
+        >
+            <Head title="Payroll Khusus Security" />
+
+            <div className="space-y-6">
+                {/* Header Action Bar */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-bold">
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-bold shrink-0">
                             <ShieldCheck className="w-6 h-6" />
                         </div>
                         <div>
                             <div className="flex items-center gap-2">
-                                <h1 className="text-xl font-bold text-gray-900 tracking-tight">
+                                <h1 className="text-xl font-bold text-slate-900 tracking-tight">
                                     Payroll Khusus Security
                                 </h1>
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
                                     Formula Khusus
                                 </span>
                             </div>
-                            <p className="text-xs text-gray-500 mt-0.5">
+                            <p className="text-xs text-slate-500 mt-0.5">
                                 Matriks rekap absensi harian dan perhitungan lembur berjenjang petugas keamanan.
                             </p>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         {currentPeriod && (
                             <a
                                 href={route('payroll-security.periods.export-excel', currentPeriod.id)}
-                                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-300 bg-white text-xs font-semibold text-gray-700 shadow-xs hover:bg-gray-50 transition"
+                                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 transition"
                             >
                                 <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
                                 Export Excel
@@ -258,9 +264,9 @@ export default function SecurityPayrollIndex({
                             <button
                                 type="button"
                                 onClick={() => setConfigModalOpen(true)}
-                                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-300 bg-white text-xs font-semibold text-gray-700 shadow-xs hover:bg-gray-50 transition"
+                                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 transition"
                             >
-                                <Settings className="w-4 h-4 text-gray-600" />
+                                <Settings className="w-4 h-4 text-slate-600" />
                                 Aturan Rumus (v{activeConfig?.version || 1})
                             </button>
                         )}
@@ -269,7 +275,7 @@ export default function SecurityPayrollIndex({
                             <button
                                 type="button"
                                 onClick={handleSyncPayslips}
-                                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#0B57D0] hover:bg-blue-700 text-xs font-semibold text-white shadow-xs transition"
+                                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0B57D0] hover:bg-[#0A58CA] text-xs font-semibold text-white shadow-xs transition"
                             >
                                 <RefreshCw className="w-4 h-4" />
                                 Sync ke Slip Gaji
@@ -277,20 +283,6 @@ export default function SecurityPayrollIndex({
                         )}
                     </div>
                 </div>
-            }
-        >
-            <Head title="Payroll Khusus Security" />
-
-            <div className="space-y-6">
-                {/* Notification Flash */}
-                {flash?.success && (
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
-                            <span>{flash.success}</span>
-                        </div>
-                    </div>
-                )}
 
                 {/* Filter and Overview Card */}
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-xs p-5">

@@ -145,8 +145,8 @@ export default function PositionsIndex({ positions, counts, filters }) {
                 {/* Header & Quick Action */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h2 className="text-xl font-bold text-gray-800">Master Jabatan</h2>
-                        <p className="text-sm text-gray-500 mt-1">
+                        <h1 className="text-xl font-bold text-slate-900 tracking-tight">Master Jabatan</h1>
+                        <p className="text-xs text-slate-500 mt-0.5">
                             Kelola posisi dan jabatan pekerjaan untuk karyawan dan tunjangan jabatan.
                         </p>
                     </div>
@@ -154,7 +154,7 @@ export default function PositionsIndex({ positions, counts, filters }) {
                         <button
                             type="button"
                             onClick={openCreateModal}
-                            className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#0B57D0] text-white text-sm font-semibold rounded-xl shadow-sm hover:bg-[#0A48A8] transition-colors"
+                            className="inline-flex items-center gap-2 rounded-xl bg-[#0B57D0] px-4 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-[#0A58CA] transition"
                         >
                             <Plus className="w-4 h-4" />
                             Tambah Jabatan
