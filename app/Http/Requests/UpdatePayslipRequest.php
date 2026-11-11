@@ -14,6 +14,7 @@ class UpdatePayslipRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'absent_days' => ['nullable', 'numeric', 'min:0'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.pay_component_id' => ['nullable', 'exists:pay_components,id'],
             'items.*.item_code_snapshot' => ['nullable', 'string', 'max:50'],

@@ -17,6 +17,7 @@ import {
 
 export default function PayslipsEdit({ payslip, payComponents }) {
     const { data, setData, put, processing, errors } = useForm({
+        absent_days: payslip.absent_days !== undefined && payslip.absent_days !== null ? payslip.absent_days : 0,
         items: payslip.items?.map((item) => ({
             pay_component_id: item.pay_component_id || '',
             item_code_snapshot: item.item_code_snapshot,
@@ -146,6 +147,36 @@ export default function PayslipsEdit({ payslip, payComponents }) {
                     )}
 
                     <form onSubmit={submit} className="mt-6 space-y-6">
+                        {/* Kehadiran & Hari Tidak Masuk */}
+                        <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-800">
+                                    Jumlah Hari Tidak Masuk (Absen / Sakit / Izin)
+                                </label>
+                                <p className="text-[11px] text-slate-500 mt-0.5">
+                                    Total hari kerja periode ini: <strong>{payslip.working_days_snapshot || 25} hari</strong>. Nilai ini menjadi faktor pengali untuk potongan kehadiran otomatis.
+                                </p>
+                            </div>
+                            <div className="w-full sm:w-48">
+                                <div className="relative">
+                                    <input
+                                        type="number"
+                                        step="0.5"
+                                        min="0"
+                                        max={payslip.working_days_snapshot || 25}
+                                        value={data.absent_days}
+                                        onChange={(e) => setData('absent_days', e.target.value)}
+                                        className="w-full text-right rounded-lg border-slate-300 text-xs font-bold font-mono focus:border-indigo-600 focus:ring-indigo-600"
+                                        placeholder="0"
+                                    />
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400">
+                                        Hari
+                                    </span>
+                                </div>
+                                <InputError message={errors.absent_days} className="mt-1 text-right" />
+                            </div>
+                        </div>
+
                         {/* Dynamic Items Table */}
                         <div className="space-y-3">
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">

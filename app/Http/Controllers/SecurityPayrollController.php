@@ -8,16 +8,17 @@ use App\Models\SecurityAttendance;
 use App\Models\SecurityOvertimeSummary;
 use App\Models\SecurityPayrollConfig;
 use App\Services\AuditLogService;
-use App\Services\PayrollExportService;
 use App\Services\SecurityPayrollCalculationService;
 use Carbon\Carbon;
 use DomainException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
@@ -53,9 +54,7 @@ class SecurityPayrollController extends Controller
             return Inertia::render('SecurityPayroll/Index', [
                 'periods' => $periods,
                 'currentPeriod' => null,
-                'periodDates' => [],
                 'securityEmployees' => [],
-                'attendances' => (object) [],
                 'summaries' => (object) [],
                 'activeConfig' => SecurityPayrollConfig::getActiveConfig(),
                 'totalOvertimeAllSecurity' => 0,
@@ -65,18 +64,6 @@ class SecurityPayrollController extends Controller
                 'filters' => $request->only(['period_id', 'search']),
             ]);
         }
-
-        $periodDates = collect($this->securityService->getPeriodDates($period))->map(function (Carbon $date) {
-            $dayNames = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
-
-            return [
-                'date' => $date->format('Y-m-d'),
-                'day_name' => $dayNames[$date->dayOfWeek],
-                'formatted_date' => $date->format('d/m'),
-                'full_date' => $date->format('d M Y'),
-                'is_sunday' => $date->isSunday(),
-            ];
-        });
 
         $employeesQuery = Employee::query()
             ->security()
@@ -92,34 +79,19 @@ class SecurityPayrollController extends Controller
         }
 
         $securityEmployees = $employeesQuery->orderBy('full_name')->get();
-        $employeeIds = $securityEmployees->pluck('id')->toArray();
-
-        // Load attendances keyed by "employeeId_date"
-        $attendancesList = SecurityAttendance::where('payroll_period_id', $period->id)
-            ->whereIn('employee_id', $employeeIds)
-            ->get();
-
-        $attendancesMap = [];
-        foreach ($attendancesList as $att) {
-            $dateStr = $att->date instanceof Carbon ? $att->date->format('Y-m-d') : Carbon::parse($att->date)->format('Y-m-d');
-            $attendancesMap[$att->employee_id.'_'.$dateStr] = [
-                'id' => $att->id,
-                'status' => $att->status,
-                'work_hours' => (float) $att->work_hours,
-                'overtime_hours' => (float) $att->overtime_hours,
-                'note' => $att->note,
-            ];
-        }
 
         // Load or auto-calculate summaries for all security employees
         $activeConfig = SecurityPayrollConfig::getActiveConfig();
         $summariesMap = [];
         $totalOvertimeAllSecurity = 0.0;
 
+        $existingSummaries = SecurityOvertimeSummary::where('payroll_period_id', $period->id)
+            ->whereIn('employee_id', $securityEmployees->pluck('id'))
+            ->get()
+            ->keyBy('employee_id');
+
         foreach ($securityEmployees as $emp) {
-            $summary = SecurityOvertimeSummary::where('payroll_period_id', $period->id)
-                ->where('employee_id', $emp->id)
-                ->first();
+            $summary = $existingSummaries->get($emp->id);
 
             if (! $summary && $period->canBeModified()) {
                 $summary = $this->securityService->calculateForEmployee($emp, $period, $activeConfig);
@@ -128,6 +100,36 @@ class SecurityPayrollController extends Controller
             if ($summary) {
                 $summariesMap[$emp->id] = [
                     'id' => $summary->id,
+                    'present_days' => (int) ($summary->present_days ?: $summary->total_work_days),
+                    'off_days' => (int) ($summary->off_days ?: $summary->total_off_days),
+                    'sick_days' => (int) $summary->sick_days,
+                    'permission_days' => (int) $summary->permission_days,
+                    'leave_days' => (int) $summary->leave_days,
+                    'absent_days' => (int) ($summary->absent_days ?: $summary->total_absent_days),
+                    'total_absence_days' => (int) ($summary->sick_days + $summary->permission_days + $summary->leave_days + ($summary->absent_days ?: $summary->total_absent_days)),
+                    'attendance_hours' => (float) ($summary->attendance_hours ?: ($summary->present_days ?: $summary->total_work_days) * 8.0),
+                    'target_hours' => (float) $summary->target_hours,
+                    'current_shortage_hours' => (float) $summary->current_shortage_hours,
+                    'previous_shortage_hours' => (float) $summary->previous_shortage_hours,
+                    'total_shortage_hours' => (float) $summary->total_shortage_hours,
+                    'shortage_offset_hours' => (float) $summary->shortage_offset_hours,
+                    'remaining_shortage_hours' => (float) $summary->remaining_shortage_hours,
+                    'regular_overtime_days' => (int) $summary->regular_overtime_days,
+                    'regular_overtime_hours' => (float) ($summary->regular_overtime_hours > 0 ? $summary->regular_overtime_hours : $summary->gross_overtime_hours),
+                    'regular_break_deduction_hours' => (float) $summary->regular_break_deduction_hours,
+                    'regular_net_overtime_hours' => (float) $summary->regular_net_overtime_hours,
+                    'regular_first_hours' => (float) $summary->regular_first_hours,
+                    'regular_first_hours_cost' => (float) $summary->regular_first_hours_cost,
+                    'regular_subsequent_hours' => (float) $summary->regular_subsequent_hours,
+                    'regular_subsequent_hours_cost' => (float) $summary->regular_subsequent_hours_cost,
+                    'regular_overtime_cost' => (float) $summary->regular_overtime_cost,
+                    'off_holiday_overtime_days' => (int) $summary->off_holiday_overtime_days,
+                    'off_holiday_overtime_hours' => (float) $summary->off_holiday_overtime_hours,
+                    'off_holiday_break_deduction_hours' => (float) $summary->off_holiday_break_deduction_hours,
+                    'off_holiday_net_overtime_hours' => (float) $summary->off_holiday_net_overtime_hours,
+                    'off_holiday_multiplier' => (float) $summary->off_holiday_multiplier,
+                    'off_holiday_overtime_cost' => (float) $summary->off_holiday_overtime_cost,
+                    'off_holiday_rate_confirmed' => (bool) $summary->off_holiday_rate_confirmed,
                     'total_days' => $summary->total_days,
                     'total_work_days' => $summary->total_work_days,
                     'total_off_days' => $summary->total_off_days,
@@ -146,6 +148,7 @@ class SecurityPayrollController extends Controller
                     'subsequent_hours_cost' => (float) $summary->subsequent_hours_cost,
                     'total_overtime_cost' => (float) $summary->total_overtime_cost,
                     'total_period_salary' => (float) $summary->total_period_salary,
+                    'calculation_snapshot' => $summary->calculation_snapshot,
                 ];
                 $totalOvertimeAllSecurity += (float) $summary->total_overtime_cost;
             }
@@ -154,9 +157,7 @@ class SecurityPayrollController extends Controller
         return Inertia::render('SecurityPayroll/Index', [
             'periods' => $periods,
             'currentPeriod' => $period,
-            'periodDates' => $periodDates,
             'securityEmployees' => $securityEmployees,
-            'attendances' => (object) $attendancesMap,
             'summaries' => (object) $summariesMap,
             'activeConfig' => $activeConfig,
             'totalOvertimeAllSecurity' => $totalOvertimeAllSecurity,
@@ -240,7 +241,7 @@ class SecurityPayrollController extends Controller
     }
 
     /**
-     * Update summary overtime hours or break deduction.
+     * Update summary working days and overtime hours (simplified input).
      */
     public function updateSummary(Request $request): RedirectResponse
     {
@@ -252,6 +253,20 @@ class SecurityPayrollController extends Controller
         $validated = $request->validate([
             'payroll_period_id' => ['required', 'exists:payroll_periods,id'],
             'employee_id' => ['required', 'exists:employees,id'],
+            'present_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'off_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'sick_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'permission_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'leave_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'absent_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'regular_overtime_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'regular_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:500'],
+            'off_holiday_overtime_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'off_holiday_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:500'],
+            'previous_shortage_hours' => ['nullable', 'numeric', 'min:0', 'max:500'],
+            'off_holiday_rate_confirmed' => ['nullable', 'boolean'],
+            // Backward-compatible fallback fields
+            'total_work_days' => ['nullable', 'integer', 'min:0', 'max:62'],
             'gross_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:500'],
             'break_deduction_hours' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
@@ -261,14 +276,63 @@ class SecurityPayrollController extends Controller
             throw new DomainException("Tidak dapat mengubah rekap pada periode berstatus '{$period->status_label}'.");
         }
 
+        $maxDays = count($this->securityService->getPeriodDates($period));
+
+        $presentDays = isset($validated['present_days']) ? (int) $validated['present_days'] : (int) ($validated['total_work_days'] ?? 0);
+        $offDays = (int) ($validated['off_days'] ?? 0);
+        $sickDays = (int) ($validated['sick_days'] ?? 0);
+        $permissionDays = (int) ($validated['permission_days'] ?? 0);
+        $leaveDays = (int) ($validated['leave_days'] ?? 0);
+        $absentDays = isset($validated['absent_days'])
+            ? (int) $validated['absent_days']
+            : (! isset($validated['present_days']) && isset($validated['total_work_days'])
+                ? max(0, $maxDays - $presentDays - $offDays)
+                : 0);
+
+        $totalDaysCount = $presentDays + $offDays + $sickDays + $permissionDays + $leaveDays + $absentDays;
+        if ($totalDaysCount > $maxDays) {
+            return back()->withErrors([
+                'present_days' => "Total hari kehadiran dan ketidakhadiran ({$totalDaysCount} hari) tidak boleh melebihi jumlah hari periode ({$maxDays} hari).",
+                'total_work_days' => "Jumlah hari kerja tidak boleh melebihi total hari periode ({$maxDays} hari).",
+            ]);
+        }
+
+        $regularOtDays = (int) ($validated['regular_overtime_days'] ?? 0);
+        $offHolidayOtDays = (int) ($validated['off_holiday_overtime_days'] ?? 0);
+        if ($regularOtDays > $maxDays) {
+            return back()->withErrors(['regular_overtime_days' => "Jumlah hari lembur reguler ({$regularOtDays} hari) melebihi hari periode ({$maxDays} hari)."]);
+        }
+        if ($offHolidayOtDays > $maxDays) {
+            return back()->withErrors(['off_holiday_overtime_days' => "Jumlah hari lembur OFF/libur ({$offHolidayOtDays} hari) melebihi hari periode ({$maxDays} hari)."]);
+        }
+
         $employee = Employee::findOrFail($validated['employee_id']);
 
-        $overrides = [];
-        if (isset($validated['gross_overtime_hours'])) {
+        $overrides = [
+            'present_days' => $presentDays,
+            'off_days' => $offDays,
+            'sick_days' => $sickDays,
+            'permission_days' => $permissionDays,
+            'leave_days' => $leaveDays,
+            'absent_days' => $absentDays,
+            'regular_overtime_days' => $regularOtDays,
+            'regular_overtime_hours' => isset($validated['regular_overtime_hours']) ? (float) $validated['regular_overtime_hours'] : (float) ($validated['gross_overtime_hours'] ?? 0),
+            'off_holiday_overtime_days' => $offHolidayOtDays,
+            'off_holiday_overtime_hours' => (float) ($validated['off_holiday_overtime_hours'] ?? 0),
+            'total_work_days' => $presentDays,
+        ];
+
+        if (isset($validated['gross_overtime_hours']) && ! isset($validated['regular_overtime_hours'])) {
             $overrides['gross_overtime_hours'] = (float) $validated['gross_overtime_hours'];
         }
         if (isset($validated['break_deduction_hours'])) {
             $overrides['break_deduction_hours'] = (float) $validated['break_deduction_hours'];
+        }
+        if (isset($validated['previous_shortage_hours'])) {
+            $overrides['previous_shortage_hours'] = (float) $validated['previous_shortage_hours'];
+        }
+        if (isset($validated['off_holiday_rate_confirmed'])) {
+            $overrides['off_holiday_rate_confirmed'] = (bool) $validated['off_holiday_rate_confirmed'];
         }
 
         DB::transaction(function () use ($period, $employee, $overrides) {
@@ -276,7 +340,156 @@ class SecurityPayrollController extends Controller
             $this->securityService->syncSecurityPayslip($period, $employee);
         });
 
-        return back()->with('success', "Rekap lembur {$employee->full_name} berhasil diperbarui.");
+        return back()->with('success', "Rekap kehadiran dan lembur {$employee->full_name} berhasil diperbarui.");
+    }
+
+    /**
+     * Bulk update summary attendance and overtime for multiple employees.
+     */
+    public function bulkUpdate(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        if (! $user || (! $user->hasPermission('payroll.security.manage') && ! $user->hasPermission('payslips.manage'))) {
+            abort(403, 'Anda tidak memiliki hak akses untuk mengelola rekap payroll Security.');
+        }
+
+        $validated = $request->validate([
+            'payroll_period_id' => ['required', 'exists:payroll_periods,id'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.employee_id' => ['required', 'exists:employees,id'],
+            'items.*.present_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'items.*.off_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'items.*.sick_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'items.*.permission_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'items.*.leave_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'items.*.absent_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'items.*.regular_overtime_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'items.*.regular_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:500'],
+            'items.*.off_holiday_overtime_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'items.*.off_holiday_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:500'],
+            'items.*.previous_shortage_hours' => ['nullable', 'numeric', 'min:0', 'max:500'],
+            'items.*.off_holiday_rate_confirmed' => ['nullable', 'boolean'],
+        ]);
+
+        $period = PayrollPeriod::findOrFail($validated['payroll_period_id']);
+        if (! $period->canBeModified()) {
+            throw new DomainException("Tidak dapat mengubah rekap pada periode berstatus '{$period->status_label}'.");
+        }
+
+        $maxDays = count($this->securityService->getPeriodDates($period));
+        $errors = [];
+
+        foreach ($validated['items'] as $index => $item) {
+            $present = (int) ($item['present_days'] ?? 0);
+            $off = (int) ($item['off_days'] ?? 0);
+            $sick = (int) ($item['sick_days'] ?? 0);
+            $permission = (int) ($item['permission_days'] ?? 0);
+            $leave = (int) ($item['leave_days'] ?? 0);
+            $absent = (int) ($item['absent_days'] ?? 0);
+            $totalDays = $present + $off + $sick + $permission + $leave + $absent;
+
+            if ($totalDays > $maxDays) {
+                $errors["items.{$index}.present_days"] = "Total hari ({$totalDays} hari) melebihi batas periode ({$maxDays} hari).";
+            }
+
+            $regDays = (int) ($item['regular_overtime_days'] ?? 0);
+            $offDaysOt = (int) ($item['off_holiday_overtime_days'] ?? 0);
+            if ($regDays > $maxDays) {
+                $errors["items.{$index}.regular_overtime_days"] = "Hari lembur reguler ({$regDays}) melebihi hari periode.";
+            }
+            if ($offDaysOt > $maxDays) {
+                $errors["items.{$index}.off_holiday_overtime_days"] = "Hari lembur OFF/libur ({$offDaysOt}) melebihi hari periode.";
+            }
+        }
+
+        if (! empty($errors)) {
+            return back()->withErrors($errors);
+        }
+
+        $count = 0;
+        DB::transaction(function () use ($period, $validated, &$count) {
+            foreach ($validated['items'] as $item) {
+                $employee = Employee::find($item['employee_id']);
+                if (! $employee) {
+                    continue;
+                }
+
+                $presentDays = (int) ($item['present_days'] ?? 0);
+                $overrides = [
+                    'present_days' => $presentDays,
+                    'off_days' => (int) ($item['off_days'] ?? 0),
+                    'sick_days' => (int) ($item['sick_days'] ?? 0),
+                    'permission_days' => (int) ($item['permission_days'] ?? 0),
+                    'leave_days' => (int) ($item['leave_days'] ?? 0),
+                    'absent_days' => (int) ($item['absent_days'] ?? 0),
+                    'regular_overtime_days' => (int) ($item['regular_overtime_days'] ?? 0),
+                    'regular_overtime_hours' => (float) ($item['regular_overtime_hours'] ?? 0),
+                    'off_holiday_overtime_days' => (int) ($item['off_holiday_overtime_days'] ?? 0),
+                    'off_holiday_overtime_hours' => (float) ($item['off_holiday_overtime_hours'] ?? 0),
+                    'total_work_days' => $presentDays,
+                ];
+
+                if (isset($item['previous_shortage_hours'])) {
+                    $overrides['previous_shortage_hours'] = (float) $item['previous_shortage_hours'];
+                }
+                if (isset($item['off_holiday_rate_confirmed'])) {
+                    $overrides['off_holiday_rate_confirmed'] = (bool) $item['off_holiday_rate_confirmed'];
+                }
+
+                $this->securityService->calculateForEmployee($employee, $period, null, $overrides);
+                $this->securityService->syncSecurityPayslip($period, $employee);
+                $count++;
+            }
+
+            $this->auditLogService->log(
+                action: 'security_payroll.bulk_updated',
+                subject: $period,
+                changes: [
+                    'count' => $count,
+                    'period_code' => $period->period_code,
+                ]
+            );
+        });
+
+        return back()->with('success', "Rekap kehadiran dan lembur {$count} petugas Security berhasil disimpan.");
+    }
+
+    /**
+     * Preview calculation for an employee before saving or finalizing.
+     */
+    public function preview(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user || (! $user->hasPermission('payroll.security.view') && ! $user->hasPermission('payslips.view'))) {
+            abort(403, 'Anda tidak memiliki hak akses untuk melihat kalkulasi Security.');
+        }
+
+        $validated = $request->validate([
+            'payroll_period_id' => ['required', 'exists:payroll_periods,id'],
+            'employee_id' => ['required', 'exists:employees,id'],
+            'present_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'off_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'sick_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'permission_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'leave_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'absent_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'regular_overtime_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'regular_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:500'],
+            'off_holiday_overtime_days' => ['nullable', 'integer', 'min:0', 'max:62'],
+            'off_holiday_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:500'],
+            'previous_shortage_hours' => ['nullable', 'numeric', 'min:0', 'max:500'],
+            'off_holiday_rate_confirmed' => ['nullable', 'boolean'],
+        ]);
+
+        $period = PayrollPeriod::findOrFail($validated['payroll_period_id']);
+        $employee = Employee::findOrFail($validated['employee_id']);
+
+        $preview = $this->securityService->previewForEmployee($employee, $period, null, $validated);
+
+        return response()->json([
+            'success' => true,
+            'data' => $preview,
+        ]);
     }
 
     /**
@@ -353,13 +566,22 @@ class SecurityPayrollController extends Controller
                 $this->securityService->syncSecurityPayslip($period, $emp);
                 $synced++;
             }
+
+            $this->auditLogService->log(
+                action: 'security_payroll.synced',
+                subject: $period,
+                changes: [
+                    'count' => $synced,
+                    'period_code' => $period->period_code,
+                ]
+            );
         });
 
         return back()->with('success', "{$synced} slip gaji Security berhasil disinkronisasi.");
     }
 
     /**
-     * Export attendance matrix and overtime recap to Excel.
+     * Export working days, overtime recap to Excel.
      */
     public function exportExcel(PayrollPeriod $period): StreamedResponse
     {
@@ -368,53 +590,32 @@ class SecurityPayrollController extends Controller
             abort(403, 'Anda tidak memiliki hak akses untuk mengunduh rekap payroll Security.');
         }
 
-        $dates = $this->securityService->getPeriodDates($period);
         $securityEmployees = Employee::security()->active()->orderBy('full_name')->get();
         $employeeIds = $securityEmployees->pluck('id')->toArray();
-
-        $attendances = SecurityAttendance::where('payroll_period_id', $period->id)
-            ->whereIn('employee_id', $employeeIds)
-            ->get();
-
-        $attMap = [];
-        foreach ($attendances as $att) {
-            $d = $att->date instanceof Carbon ? $att->date->format('Y-m-d') : Carbon::parse($att->date)->format('Y-m-d');
-            $attMap[$att->employee_id.'_'.$d] = $att;
-        }
 
         $summaries = SecurityOvertimeSummary::where('payroll_period_id', $period->id)
             ->whereIn('employee_id', $employeeIds)
             ->get()
             ->keyBy('employee_id');
 
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Rekap Lembur Security');
 
         // Header Title
-        $sheet->setCellValue('A1', 'REKAPITULASI KEHADIRAN DAN LEMBUR SECURITY');
-        $sheet->setCellValue('A2', 'PERIODE: ' . Carbon::parse($period->start_date)->translatedFormat('d F Y') . ' s/d ' . Carbon::parse($period->end_date)->translatedFormat('d F Y'));
+        $sheet->setCellValue('A1', 'REKAPITULASI HARI KERJA DAN LEMBUR SECURITY');
+        $sheet->setCellValue('A2', 'PERIODE: '.Carbon::parse($period->start_date)->translatedFormat('d F Y').' s/d '.Carbon::parse($period->end_date)->translatedFormat('d F Y'));
         $sheet->getStyle('A1:A2')->getFont()->setBold(true)->setSize(12);
 
         // Build Table Headers
         $row = 4;
-        $sheet->setCellValue('A' . $row, 'No.');
-        $sheet->setCellValue('B' . $row, 'Nama Security');
-
-        $col = 3; // Column C
-        foreach ($dates as $d) {
-            $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
-            $dayNames = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
-            $sheet->setCellValue($colLetter . $row, $dayNames[$d->dayOfWeek] . "\n" . $d->format('d/m'));
-            $sheet->getStyle($colLetter . $row)->getAlignment()->setWrapText(true)->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $col++;
-        }
+        $sheet->setCellValue('A'.$row, 'No.');
+        $sheet->setCellValue('B'.$row, 'Nama Security');
 
         $summaryHeaders = [
             'Total Hari',
+            'Hari Kerja',
             'Jam Kerja',
-            'OFF',
-            'Absen',
             'Jam Lembur',
             'Potongan Istirahat',
             'Jam Lembur Bersih',
@@ -427,16 +628,17 @@ class SecurityPayrollController extends Controller
             'Total Upah Periode',
         ];
 
+        $col = 3; // Column C
         foreach ($summaryHeaders as $h) {
-            $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
-            $sheet->setCellValue($colLetter . $row, $h);
-            $sheet->getStyle($colLetter . $row)->getAlignment()->setWrapText(true)->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $colLetter = Coordinate::stringFromColumnIndex($col);
+            $sheet->setCellValue($colLetter.$row, $h);
+            $sheet->getStyle($colLetter.$row)->getAlignment()->setWrapText(true)->setHorizontal(Alignment::HORIZONTAL_CENTER);
             $col++;
         }
 
         $maxCol = $col - 1;
-        $maxColLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($maxCol);
-        $headerRange = 'A' . $row . ':' . $maxColLetter . $row;
+        $maxColLetter = Coordinate::stringFromColumnIndex($maxCol);
+        $headerRange = 'A'.$row.':'.$maxColLetter.$row;
         $sheet->getStyle($headerRange)->getFont()->setBold(true);
         $sheet->getStyle($headerRange)->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('E2E8F0');
 
@@ -446,29 +648,8 @@ class SecurityPayrollController extends Controller
         $totalOvertimeSum = 0;
 
         foreach ($securityEmployees as $emp) {
-            $sheet->setCellValue('A' . $dataRow, $no++);
-            $sheet->setCellValue('B' . $dataRow, $emp->full_name);
-
-            $col = 3;
-            foreach ($dates as $d) {
-                $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
-                $key = $emp->id . '_' . $d->format('Y-m-d');
-                $att = $attMap[$key] ?? null;
-
-                $val = '8';
-                if ($att) {
-                    if ($att->status === 'off') {
-                        $val = 'OFF';
-                    } elseif ($att->status === 'absent') {
-                        $val = 'A';
-                    } else {
-                        $val = (float) $att->work_hours + (float) $att->overtime_hours;
-                    }
-                }
-                $sheet->setCellValue($colLetter . $dataRow, $val);
-                $sheet->getStyle($colLetter . $dataRow)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-                $col++;
-            }
+            $sheet->setCellValue('A'.$dataRow, $no++);
+            $sheet->setCellValue('B'.$dataRow, $emp->full_name);
 
             $sum = $summaries->get($emp->id);
             if (! $sum) {
@@ -477,9 +658,8 @@ class SecurityPayrollController extends Controller
 
             $summaryValues = [
                 $sum->total_days,
+                $sum->total_work_days,
                 $sum->total_work_hours,
-                $sum->total_off_days,
-                $sum->total_absent_days,
                 $sum->gross_overtime_hours,
                 $sum->break_deduction_hours,
                 $sum->net_overtime_hours,
@@ -492,12 +672,13 @@ class SecurityPayrollController extends Controller
                 $sum->total_period_salary,
             ];
 
+            $col = 3;
             foreach ($summaryValues as $idx => $sVal) {
-                $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
-                $sheet->setCellValue($colLetter . $dataRow, $sVal);
+                $colLetter = Coordinate::stringFromColumnIndex($col);
+                $sheet->setCellValue($colLetter.$dataRow, $sVal);
 
-                if (in_array($idx, [7, 9, 11, 12, 13], true)) {
-                    $sheet->getStyle($colLetter . $dataRow)->getNumberFormat()->setFormatCode('#,##0');
+                if (in_array($idx, [6, 8, 10, 11, 12], true)) {
+                    $sheet->getStyle($colLetter.$dataRow)->getNumberFormat()->setFormatCode('#,##0');
                 }
                 $col++;
             }
@@ -508,22 +689,22 @@ class SecurityPayrollController extends Controller
 
         // Footer Total Row
         $footerRow = $dataRow;
-        $sheet->setCellValue('A' . $footerRow, 'TOTAL LEMBUR SECURITY');
-        // Merge from A to column before total overtime cost
-        $costColIndex = 3 + count($dates) + 12; // 0-based index offset for Total Biaya Lembur
-        $costColLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($costColIndex);
-        $beforeCostLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($costColIndex - 1);
+        $sheet->setCellValue('A'.$footerRow, 'TOTAL LEMBUR SECURITY');
+        // Total Biaya Lembur is the 12th summary column starting at C
+        $costColIndex = 3 + 11;
+        $costColLetter = Coordinate::stringFromColumnIndex($costColIndex);
+        $beforeCostLetter = Coordinate::stringFromColumnIndex($costColIndex - 1);
 
-        $sheet->mergeCells('A' . $footerRow . ':' . $beforeCostLetter . $footerRow);
-        $sheet->setCellValue($costColLetter . $footerRow, $totalOvertimeSum);
-        $sheet->getStyle($costColLetter . $footerRow)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->mergeCells('A'.$footerRow.':'.$beforeCostLetter.$footerRow);
+        $sheet->setCellValue($costColLetter.$footerRow, $totalOvertimeSum);
+        $sheet->getStyle($costColLetter.$footerRow)->getNumberFormat()->setFormatCode('#,##0');
 
-        $footerRange = 'A' . $footerRow . ':' . $maxColLetter . $footerRow;
+        $footerRange = 'A'.$footerRow.':'.$maxColLetter.$footerRow;
         $sheet->getStyle($footerRange)->getFont()->setBold(true);
         $sheet->getStyle($footerRange)->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('FEF08A');
 
         // Borders
-        $fullTableRange = 'A4:' . $maxColLetter . $footerRow;
+        $fullTableRange = 'A4:'.$maxColLetter.$footerRow;
         $sheet->getStyle($fullTableRange)->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
         $writer = new Xlsx($spreadsheet);

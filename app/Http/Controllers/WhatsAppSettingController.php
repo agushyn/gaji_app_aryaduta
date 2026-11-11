@@ -86,8 +86,42 @@ class WhatsAppSettingController extends Controller
 
     /**
      * Test connection to WhatsApp gateway without sending any payroll data.
+     * If 'recipient' is omitted, tests HTTP gateway connectivity and credentials only.
+     * If 'recipient' is provided, sends a benign test verification message to that recipient.
      */
     public function testConnection(Request $request): RedirectResponse|JsonResponse
+    {
+        abort_if(! $request->user()->hasPermission('settings.manage'), 403, 'Akses ditolak.');
+
+        $recipient = $request->input('recipient');
+
+        if (! empty($recipient)) {
+            $request->validate([
+                'recipient' => ['required', 'string', 'max:30'],
+            ], [
+                'recipient.required' => 'Nomor WhatsApp tujuan uji coba wajib diisi.',
+            ]);
+
+            $result = $this->whatsAppService->sendTestMessage($recipient);
+        } else {
+            $result = $this->whatsAppService->testGatewayConnection();
+        }
+
+        if ($request->wantsJson()) {
+            return response()->json($result, $result['success'] ? 200 : 422);
+        }
+
+        if ($result['success']) {
+            return redirect()->back()->with('success', $result['message']);
+        }
+
+        return redirect()->back()->with('error', $result['message']);
+    }
+
+    /**
+     * Send a benign verification ping message to the administrator's phone.
+     */
+    public function sendTestMessage(Request $request): RedirectResponse|JsonResponse
     {
         abort_if(! $request->user()->hasPermission('settings.manage'), 403, 'Akses ditolak.');
 
@@ -97,7 +131,7 @@ class WhatsAppSettingController extends Controller
             'recipient.required' => 'Nomor WhatsApp tujuan uji coba wajib diisi.',
         ]);
 
-        $result = $this->whatsAppService->testConnection($request->input('recipient'));
+        $result = $this->whatsAppService->sendTestMessage($request->input('recipient'));
 
         if ($request->wantsJson()) {
             return response()->json($result, $result['success'] ? 200 : 422);

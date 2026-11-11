@@ -7,6 +7,7 @@ use App\Services\WhatsApp\DTO\WhatsAppCallbackResult;
 use App\Services\WhatsApp\DTO\WhatsAppSendResult;
 use App\Services\WhatsApp\DTO\WhatsAppStatusResult;
 use App\Services\WhatsApp\OpenWaClient;
+use App\Support\PhoneNumberNormalizer;
 use Illuminate\Http\Request;
 
 class OpenWaGateway extends BaseWhatsAppGateway
@@ -44,12 +45,22 @@ class OpenWaGateway extends BaseWhatsAppGateway
 
     public function validateConfiguration(): bool
     {
-        return ! empty($this->baseUrl) && ! empty($this->apiKey) && ! empty($this->sessionId);
+        return $this->client->validateBaseUrl() === null && ! empty($this->apiKey) && ! empty($this->sessionId);
     }
 
     public function supportsDocumentDelivery(): bool
     {
         return true;
+    }
+
+    /**
+     * Test gateway connectivity and API credentials without sending a message to a recipient.
+     *
+     * @return array{success: bool, api_connected: bool, session_status: string, is_ready: bool, session_id: string, message: string}
+     */
+    public function testGatewayConnectivity(): array
+    {
+        return $this->client->testConnectivity();
     }
 
     /**
@@ -187,14 +198,20 @@ class OpenWaGateway extends BaseWhatsAppGateway
      */
     public function formatChatId(string $recipient): string
     {
-        $trimmed = trim($recipient);
+        $normalizedChatId = PhoneNumberNormalizer::toOpenWaChatId($recipient);
 
+        if (! empty($normalizedChatId)) {
+            return $normalizedChatId;
+        }
+
+        // Fallback for non-standard test numbers, ensuring @c.us suffix is added exactly once
+        $trimmed = trim($recipient);
         if (str_ends_with($trimmed, '@c.us') || str_ends_with($trimmed, '@g.us')) {
             return $trimmed;
         }
 
         $digits = $this->formatRecipientNumber($trimmed);
 
-        return "{$digits}@c.us";
+        return ! empty($digits) ? "{$digits}@c.us" : "{$trimmed}@c.us";
     }
 }

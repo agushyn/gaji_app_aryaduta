@@ -80,11 +80,12 @@ export default function Login({ status }) {
                 >
                     <div className="relative z-10">
                         {/* Brand Logo & Nama Aplikasi */}
-                        <div className="mb-6 flex items-center justify-center gap-2.5">
-                            <span className="relative flex h-6 w-7 items-center justify-center rounded-[5px] bg-[#9be15d] shadow-sm">
-                                <span className="h-2 w-2 rounded-full bg-white/90" />
-                                <span className="absolute -bottom-1 left-1.5 h-2 w-2 rotate-45 bg-[#9be15d]" />
-                            </span>
+                        <div className="mb-6 flex flex-col items-center justify-center gap-2">
+                            <img
+                                src="/logo.png"
+                                alt="Logo Arya Duta"
+                                className="h-12 w-auto object-contain drop-shadow-sm select-none"
+                            />
                             <span className="text-base font-bold tracking-tight text-slate-900">
                                 Sistem Penggajian Arya Duta
                             </span>

@@ -45,6 +45,16 @@ class PayrollPeriod extends Model
     }
 
     /**
+     * The accessors to append to the model's array form.
+     *
+     * @var array<int, string>
+     */
+    protected $appends = [
+        'status_label',
+        'is_modifiable',
+    ];
+
+    /**
      * Relationship with payslips.
      */
     public function payslips(): HasMany
@@ -187,11 +197,27 @@ class PayrollPeriod extends Model
     }
 
     /**
+     * Determine if the period can be modified by personalia (attribute accessor).
+     */
+    public function getIsModifiableAttribute(): bool
+    {
+        if (empty($this->status)) {
+            return false;
+        }
+
+        return $this->canBeModified();
+    }
+
+    /**
      * Human readable status label.
      */
     public function getStatusLabelAttribute(): string
     {
-        return PayrollPeriodStatus::tryFrom($this->status)?->label() ?? $this->status;
+        if (empty($this->status)) {
+            return '';
+        }
+
+        return PayrollPeriodStatus::tryFrom($this->status)?->label() ?? (string) $this->status;
     }
 
     /**

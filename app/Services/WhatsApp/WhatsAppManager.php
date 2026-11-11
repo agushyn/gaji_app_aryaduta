@@ -71,7 +71,7 @@ class WhatsAppManager
     {
         return match (strtolower($driver)) {
             'openwa' => new OpenWaGateway(
-                baseUrl: $customConfig['endpoint'] ?? 'http://localhost:8080/api',
+                baseUrl: \App\Services\WhatsApp\OpenWaClient::normalizeBaseUrl($customConfig['endpoint'] ?? 'http://localhost:3000/api'),
                 apiKey: $customConfig['token'] ?? ($customConfig['secret'] ?? ''),
                 sessionId: $customConfig['session_id'] ?? ($customConfig['sender'] ?? 'default'),
                 connectionTimeout: (int) ($customConfig['connection_timeout'] ?? 10),

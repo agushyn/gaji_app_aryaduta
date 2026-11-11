@@ -1,14 +1,12 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, router, useForm, usePage } from '@inertiajs/react';
+import { Head, useForm, usePage } from '@inertiajs/react';
 import {
     Activity,
     AlertCircle,
     CheckCircle,
-    Clock,
     Copy,
     Eye,
     EyeOff,
-    FileText,
     Info,
     MessageSquare,
     Radio,
@@ -29,6 +27,8 @@ export default function WhatsAppSettings({ config, canManage }) {
     const [copiedWebhook, setCopiedWebhook] = useState(false);
     const [checkingSession, setCheckingSession] = useState(false);
     const [sessionStatusResult, setSessionStatusResult] = useState(null);
+    const [testingGateway, setTestingGateway] = useState(false);
+    const [gatewayTestResult, setGatewayTestResult] = useState(null);
 
     // Form for WhatsApp Gateway Configuration
     const { data, setData, put, processing, errors } = useForm({
@@ -48,12 +48,12 @@ export default function WhatsAppSettings({ config, canManage }) {
         is_active: Boolean(config.is_active),
     });
 
-    // Form for Test Connection Ping
+    // Form for Send Test Message to Administrator
     const {
         data: testData,
         setData: setTestData,
-        post: postTest,
-        processing: testProcessing,
+        post: postTestMessage,
+        processing: messageProcessing,
         errors: testErrors,
     } = useForm({
         recipient: '',
@@ -66,11 +66,36 @@ export default function WhatsAppSettings({ config, canManage }) {
         });
     };
 
-    const handleTest = (e) => {
+    const handleSendMessageTest = (e) => {
         e.preventDefault();
-        postTest(route('settings.whatsapp.test'), {
+        postTestMessage(route('settings.whatsapp.send-test-message'), {
             preserveScroll: true,
         });
+    };
+
+    const handleTestGatewayConnectivity = async () => {
+        setTestingGateway(true);
+        try {
+            const response = await fetch(route('settings.whatsapp.test'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                },
+                body: JSON.stringify({}),
+            });
+            const result = await response.json();
+            setGatewayTestResult(result);
+        } catch (err) {
+            setGatewayTestResult({
+                success: false,
+                api_connected: false,
+                message: 'Gagal menghubungi server untuk menguji konektivitas gateway API.',
+            });
+        } finally {
+            setTestingGateway(false);
+        }
     };
 
     const handleCheckSession = async () => {
@@ -113,6 +138,20 @@ export default function WhatsAppSettings({ config, canManage }) {
     const currentSessionStatus = sessionStatusResult?.session_status || config.last_session_status || 'UNKNOWN';
     const isSessionReady = sessionStatusResult ? sessionStatusResult.is_ready : (config.last_session_status === 'CONNECTED');
 
+    // Helper to calculate preview of normalized endpoint
+    const previewNormalizedEndpoint = () => {
+        if (!isOpenWa || !data.endpoint) return data.endpoint;
+        let ep = data.endpoint.trim();
+        if (!ep.startsWith('http://') && !ep.startsWith('https://')) {
+            ep = 'http://' + ep;
+        }
+        ep = ep.replace(/\/+$/, '');
+        if (!ep.endsWith('/api')) {
+            ep = ep + '/api';
+        }
+        return ep;
+    };
+
     return (
         <AuthenticatedLayout header="Pengaturan WhatsApp Gateway">
             <Head title="Pengaturan WhatsApp" />
@@ -126,7 +165,7 @@ export default function WhatsAppSettings({ config, canManage }) {
                             Konfigurasi Gateway WhatsApp & OpenWA
                         </h1>
                         <p className="mt-1 text-xs text-slate-500">
-                            Kelola provider WhatsApp (OpenWA, Fonnte, Mock) untuk pengiriman dokumen slip gaji PDF secara terenkripsi dan terlacak.
+                            Kelola provider WhatsApp (OpenWA, Fonnte, Generic, Mock) untuk pengiriman dokumen slip gaji PDF secara terenkripsi dan terlacak.
                         </p>
                     </div>
 
@@ -281,18 +320,27 @@ export default function WhatsAppSettings({ config, canManage }) {
                                         URL Base Endpoint API Gateway <span className="text-rose-500">*</span>
                                     </label>
                                     <input
-                                        type="url"
+                                        type="text"
                                         value={data.endpoint}
                                         disabled={!canManage}
                                         onChange={(e) => setData('endpoint', e.target.value)}
-                                        placeholder={isOpenWa ? 'http://localhost:3000/api atau https://wa-gateway.example.com/api' : 'https://api.fonnte.com/send'}
+                                        placeholder={isOpenWa ? 'http://localhost:3000/api atau http://100.112.241.87:2785' : 'https://api.fonnte.com/send'}
                                         className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-500 font-mono"
                                     />
-                                    <p className="mt-1 text-[11px] text-slate-400">
-                                        {isOpenWa
-                                            ? 'Base URL OpenWA REST API server (dikirim dengan header X-API-Key).'
-                                            : 'URL endpoint pengiriman pesan provider.'}
-                                    </p>
+                                    {isOpenWa ? (
+                                        <div className="mt-1 space-y-1">
+                                            <p className="text-[11px] text-slate-500">
+                                                Sistem otomatis menormalisasi Base URL OpenWA berakhiran <code className="bg-slate-100 px-1 py-0.5 rounded text-emerald-700 font-mono font-semibold">/api</code>.
+                                            </p>
+                                            <p className="text-[11px] text-slate-400 font-mono truncate">
+                                                Base URL final: <span className="text-slate-600">{previewNormalizedEndpoint()}</span>
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <p className="mt-1 text-[11px] text-slate-400">
+                                            URL endpoint pengiriman pesan provider.
+                                        </p>
+                                    )}
                                     {errors.endpoint && (
                                         <p className="mt-1 text-xs text-rose-600">{errors.endpoint}</p>
                                     )}
@@ -513,9 +561,59 @@ export default function WhatsAppSettings({ config, canManage }) {
                         </div>
                     </div>
 
-                    {/* Sidebar: OpenWA Status, Test Connection & Webhook Info (1 Col) */}
+                    {/* Sidebar: Diagnostics, Session Status, Test Ping, and Security */}
                     <div className="space-y-6">
-                        {/* OpenWA Live Session Status Card */}
+                        {/* 1. Test Gateway Connectivity (No Recipient Required) */}
+                        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-3">
+                            <div className="flex items-center gap-2">
+                                <Activity className="h-5 w-5 text-indigo-600" />
+                                <h2 className="text-sm font-bold text-slate-800">
+                                    Uji Koneksi Gateway API
+                                </h2>
+                            </div>
+
+                            <p className="text-xs text-slate-500 leading-relaxed">
+                                Memeriksa konektivitas jaringan, port, dan validitas API Key langsung ke server gateway tanpa mengirim pesan ke nomor mana pun.
+                            </p>
+
+                            {gatewayTestResult && (
+                                <div
+                                    className={`rounded-xl border p-3 text-xs ${
+                                        gatewayTestResult.success
+                                            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                                            : 'bg-rose-50 border-rose-200 text-rose-800'
+                                    }`}
+                                >
+                                    <div className="font-semibold flex items-center gap-1.5">
+                                        {gatewayTestResult.success ? (
+                                            <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
+                                        ) : (
+                                            <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                                        )}
+                                        {gatewayTestResult.success ? 'Gateway Terhubung' : 'Koneksi Gagal'}
+                                    </div>
+                                    <p className="mt-1 text-[11px] leading-relaxed">
+                                        {gatewayTestResult.message}
+                                    </p>
+                                </div>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={handleTestGatewayConnectivity}
+                                disabled={testingGateway || !canManage}
+                                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-50 border border-indigo-200 px-4 py-2.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 transition"
+                            >
+                                {testingGateway ? (
+                                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                    <Activity className="h-3.5 w-3.5 text-indigo-600" />
+                                )}
+                                Test Koneksi Gateway (Ping API)
+                            </button>
+                        </div>
+
+                        {/* 2. OpenWA Live Session Status Card */}
                         {isOpenWa && (
                             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
                                 <div className="flex items-center justify-between">
@@ -597,35 +695,35 @@ export default function WhatsAppSettings({ config, canManage }) {
                             </div>
                         )}
 
-                        {/* Test Connection Card */}
+                        {/* 3. Send Test Verification Message to Admin */}
                         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
                             <div className="flex items-center gap-2 mb-3">
                                 <MessageSquare className="h-5 w-5 text-emerald-600" />
                                 <h2 className="text-sm font-bold text-slate-800">
-                                    Uji Koneksi Pesan Teks
+                                    Test Kirim Pesan ke Admin
                                 </h2>
                             </div>
 
                             <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-                                Kirim pesan teks uji coba ke nomor WhatsApp tujuan untuk memverifikasi API Key dan koneksi gateway aktif.
+                                Kirim pesan verifikasi ke nomor ponsel admin untuk membuktikan pesan benar-benar sampai di WhatsApp fisik.
                             </p>
 
                             <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 mb-4 text-xs text-blue-800 flex items-start gap-2">
                                 <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
                                 <p>
-                                    <strong>Prinsip Keamanan:</strong> Uji coba koneksi hanya mengirimkan teks ping verifikasi. Tidak ada data gaji atau informasi rahasia karyawan yang dikirimkan.
+                                    <strong>Prinsip Keamanan:</strong> Uji coba pesan hanya mengirim teks verifikasi ping sederhana tanpa memuat data gaji atau informasi rahasia karyawan apa pun.
                                 </p>
                             </div>
 
-                            <form onSubmit={handleTest} className="space-y-3">
+                            <form onSubmit={handleSendMessageTest} className="space-y-3">
                                 <div>
                                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                                        Nomor WhatsApp Uji Coba (Admin)
+                                        Nomor WhatsApp Admin Uji Coba
                                     </label>
                                     <input
                                         type="tel"
                                         value={testData.recipient}
-                                        disabled={!canManage || testProcessing}
+                                        disabled={!canManage || messageProcessing}
                                         onChange={(e) => setTestData('recipient', e.target.value)}
                                         placeholder="081234567890"
                                         className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 font-mono"
@@ -637,10 +735,10 @@ export default function WhatsAppSettings({ config, canManage }) {
 
                                 <button
                                     type="submit"
-                                    disabled={testProcessing || !canManage}
+                                    disabled={messageProcessing || !canManage}
                                     className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-500 disabled:opacity-50 transition"
                                 >
-                                    {testProcessing ? (
+                                    {messageProcessing ? (
                                         <RefreshCw className="h-4 w-4 animate-spin" />
                                     ) : (
                                         <Send className="h-4 w-4" />

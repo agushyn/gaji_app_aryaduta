@@ -22,7 +22,8 @@ class PayslipService
     public function __construct(
         protected PayrollCalculationService $calculationService,
         protected AuditLogService $auditLogService,
-        protected OvertimeCalculationService $overtimeService
+        protected OvertimeCalculationService $overtimeService,
+        protected AttendanceDeductionService $attendanceDeductionService
     ) {}
 
     /**
@@ -96,6 +97,7 @@ class PayslipService
                 'email_snapshot' => $employee->email,
                 'phone_snapshot' => $employee->phone,
                 'working_days_snapshot' => $data['working_days'] ?? $period->working_days ?? (int) CompanySetting::get('default_working_days', 25),
+                'absent_days' => isset($data['absent_days']) ? max(0, (float) $data['absent_days']) : 0,
                 'period_month_snapshot' => $data['period_month_label'] ?? $period->period_month_label ?? ($period->start_date ? $period->start_date->translatedFormat('F Y') : $period->period_code),
                 'period_start_date_snapshot' => $period->start_date,
                 'period_end_date_snapshot' => $period->end_date,
@@ -200,6 +202,9 @@ class PayslipService
 
             if (isset($data['working_days'])) {
                 $updatePayload['working_days_snapshot'] = $data['working_days'];
+            }
+            if (isset($data['absent_days'])) {
+                $updatePayload['absent_days'] = max(0, (float) $data['absent_days']);
             }
             if (isset($data['overtime_period'])) {
                 $updatePayload['overtime_period_snapshot'] = $data['overtime_period'];
@@ -419,16 +424,49 @@ class PayslipService
                     continue;
                 }
 
+                // Determine absent days for employee
+                $absentDays = 0.0;
+                if ($employee->isSecurity()) {
+                    $secSummary = \App\Models\SecurityOvertimeSummary::where('payroll_period_id', $period->id)
+                        ->where('employee_id', $employee->id)
+                        ->first();
+                    if ($secSummary) {
+                        $absentDays = (float) $secSummary->total_absent_days;
+                    } else {
+                        $secAbsents = \App\Models\SecurityAttendance::where('payroll_period_id', $period->id)
+                            ->where('employee_id', $employee->id)
+                            ->where('status', 'absent')
+                            ->count();
+                        $absentDays = (float) $secAbsents;
+                    }
+                } elseif ($existing) {
+                    $absentDays = (float) ($existing->absent_days ?? 0);
+                }
+
                 // Build default master salary items for this employee
                 $masterItems = $employee->getDefaultSalaryItems($workingDays);
+
+                // Calculate attendance deduction items if attendance cut is active and employee has absent days
+                $attDeductionRes = $this->attendanceDeductionService->calculateDeductions(
+                    employee: $employee,
+                    absentDays: $absentDays,
+                    workingDays: $workingDays,
+                    earningsItems: $masterItems
+                );
+                $attendanceDeductionItems = $attDeductionRes['items'];
 
                 if ($existing) {
                     // Update existing draft / changes_requested payslip:
                     // Keep non-master dynamic items (e.g., OVERTIME, OFFICIAL_DUTY, LOAN_DEDUCTION, etc.)
+                    // Exclude previous attendance deductions to ensure idempotent recalculation
                     $preservedDynamicItems = [];
                     foreach ($existing->items as $item) {
                         $code = strtoupper($item->item_code_snapshot ?? '');
-                        if (! in_array($code, $masterCodes, true)) {
+                        $isAttDeduction = ($item->category === 'attendance_deduction')
+                            || str_starts_with($code, 'ATT_CUT_')
+                            || in_array($code, ['ATT_SIC', 'ATTENDANCE_CUT_SIC', 'POT_ABSEN'], true);
+
+                        if (! in_array($code, $masterCodes, true) && ! $isAttDeduction) {
                             $preservedDynamicItems[] = [
                                 'pay_component_id' => $item->pay_component_id,
                                 'item_code_snapshot' => $item->item_code_snapshot,
@@ -444,21 +482,19 @@ class PayslipService
                         }
                     }
 
-                    // Merge master items + preserved dynamic items
-                    $combinedItems = array_merge($masterItems, $preservedDynamicItems);
+                    // Merge master items + preserved dynamic items + freshly calculated attendance deductions
+                    $combinedItems = array_merge($masterItems, $preservedDynamicItems, $attendanceDeductionItems);
 
                     // Re-calculate & update existing payslip
                     $this->updatePayslip($existing, [
                         'working_days' => $workingDays,
+                        'absent_days' => $absentDays,
                         'items' => $combinedItems,
                         'updated_by' => $actorId,
                     ]);
 
                     if ($employee->isSecurity()) {
-                        if (\App\Models\SecurityOvertimeSummary::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()
-                            || \App\Models\SecurityAttendance::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()) {
-                            app(SecurityPayrollCalculationService::class)->syncSecurityPayslip($period, $employee);
-                        }
+                        app(SecurityPayrollCalculationService::class)->syncSecurityPayslip($period, $employee);
                     } else {
                         if (OvertimeEntry::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()) {
                             $this->syncEmployeeOvertime($period, $employee);
@@ -467,19 +503,19 @@ class PayslipService
 
                     $updatedCount++;
                 } else {
-                    // Create new payslip
+                    // Create new payslip with master items and attendance deductions
+                    $combinedItems = array_merge($masterItems, $attendanceDeductionItems);
+
                     $newSlip = $this->createPayslip($period, [
                         'employee_id' => $employee->id,
                         'working_days' => $workingDays,
-                        'items' => $masterItems,
+                        'absent_days' => $absentDays,
+                        'items' => $combinedItems,
                         'created_by' => $actorId,
                     ]);
 
                     if ($employee->isSecurity()) {
-                        if (\App\Models\SecurityOvertimeSummary::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()
-                            || \App\Models\SecurityAttendance::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()) {
-                            app(SecurityPayrollCalculationService::class)->syncSecurityPayslip($period, $employee);
-                        }
+                        app(SecurityPayrollCalculationService::class)->syncSecurityPayslip($period, $employee);
                     } else {
                         if (OvertimeEntry::where('payroll_period_id', $period->id)->where('employee_id', $employee->id)->exists()) {
                             $this->syncEmployeeOvertime($period, $employee);
@@ -523,9 +559,9 @@ class PayslipService
             $componentId = $item['pay_component_id'] ?? null;
             $component = $componentId ? $components->get($componentId) : null;
 
-            $code = $component ? $component->code : ($item['item_code_snapshot'] ?? 'ITEM-'.($index + 1));
-            $name = $component ? $component->name : ($item['description_snapshot'] ?? 'Komponen '.($index + 1));
-            $type = $component ? $component->type : ($item['item_type'] ?? 'earning');
+            $code = ! empty($item['item_code_snapshot']) ? $item['item_code_snapshot'] : ($component ? $component->code : 'ITEM-'.($index + 1));
+            $name = ! empty($item['description_snapshot']) ? $item['description_snapshot'] : ($component ? $component->name : 'Komponen '.($index + 1));
+            $type = ! empty($item['item_type']) ? $item['item_type'] : ($component ? $component->type : 'earning');
 
             $amount = $this->calculationService->normalizeDecimal($item['amount'] ?? 0);
             $quantity = isset($item['quantity']) && $item['quantity'] !== '' ? $this->calculationService->normalizeDecimal($item['quantity']) : null;
@@ -713,6 +749,67 @@ class PayslipService
         ]);
 
         return $payslip->fresh(['items']);
+    }
+
+    /**
+     * Recalculate attendance deductions for a specific payslip.
+     */
+    public function recalculateAttendanceDeductions(Payslip $payslip, ?float $absentDays = null): Payslip
+    {
+        if (! $payslip->canBeModified()) {
+            throw new DomainException("Slip gaji dengan status '{$payslip->status_label}' tidak dapat dihitung ulang.");
+        }
+
+        $effectiveAbsentDays = $absentDays !== null ? max(0, $absentDays) : (float) ($payslip->absent_days ?? 0);
+        $workingDays = (int) ($payslip->working_days_snapshot ?: 25);
+        $employee = $payslip->employee;
+
+        // Current items excluding existing attendance deduction items
+        $currentItems = [];
+        $earningsItems = [];
+        foreach ($payslip->items as $item) {
+            $code = strtoupper($item->item_code_snapshot ?? '');
+            $isAttDeduction = ($item->category === 'attendance_deduction')
+                || str_starts_with($code, 'ATT_CUT_')
+                || in_array($code, ['ATT_SIC', 'ATTENDANCE_CUT_SIC', 'POT_ABSEN'], true);
+
+            if (! $isAttDeduction) {
+                $currentItems[] = [
+                    'pay_component_id' => $item->pay_component_id,
+                    'item_code_snapshot' => $item->item_code_snapshot,
+                    'description_snapshot' => $item->description_snapshot,
+                    'item_type' => $item->item_type,
+                    'category' => $item->category,
+                    'quantity' => $item->quantity,
+                    'unit' => $item->unit,
+                    'rate' => $item->rate,
+                    'note' => $item->note,
+                    'amount' => $item->amount,
+                ];
+                if ($item->item_type === 'earning') {
+                    $earningsItems[] = $item->toArray();
+                }
+            }
+        }
+
+        $attRes = $this->attendanceDeductionService->calculateDeductions(
+            employee: $employee,
+            absentDays: $effectiveAbsentDays,
+            workingDays: $workingDays,
+            earningsItems: $earningsItems
+        );
+
+        $combinedItems = array_merge($currentItems, $attRes['items']);
+
+        return $this->updatePayslip($payslip, [
+            'absent_days' => $effectiveAbsentDays,
+            'items' => $combinedItems,
+        ]);
+    }
+
+    public function getAttendanceDeductionService(): AttendanceDeductionService
+    {
+        return $this->attendanceDeductionService;
     }
 }
 

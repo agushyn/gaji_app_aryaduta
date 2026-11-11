@@ -322,11 +322,130 @@ class OpenWaGatewayTest extends TestCase
     }
 
     /**
+     * Test gateway connectivity check without recipient pings gateway status without sending message.
+     */
+    public function test_openwa_gateway_connectivity_check_without_recipient_success(): void
+    {
+        Http::fake([
+            'http://localhost:3000/api/sessions/payroll_session/status' => Http::response([
+                'status' => 'CONNECTED',
+                'session' => 'payroll_session',
+            ], 200),
+        ]);
+
+        $response = $this->actingAs($this->superAdmin)->postJson(route('settings.whatsapp.test'));
+
+        $response->assertOk();
+        $response->assertJson([
+            'success' => true,
+            'api_connected' => true,
+        ]);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'http://localhost:3000/api/sessions/payroll_session/status'
+                && $request->method() === 'GET'
+                && $request->header('X-API-Key')[0] === 'test-openwa-api-key';
+        });
+
+        // Ensure NO message send endpoint was called
+        Http::assertNotSent(function ($request) {
+            return str_contains($request->url(), 'messages/send');
+        });
+    }
+
+    /**
+     * Test gateway connectivity check with empty/invalid Base URL returns clear config error instead of POST /.
+     */
+    public function test_openwa_gateway_connectivity_check_empty_base_url_returns_clear_error(): void
+    {
+        $this->configureOpenWa(['endpoint' => '']);
+        Http::fake();
+
+        $response = $this->actingAs($this->superAdmin)->postJson(route('settings.whatsapp.test'));
+
+        $response->assertStatus(422);
+        $response->assertJson([
+            'success' => false,
+            'api_connected' => false,
+        ]);
+        $this->assertStringContainsString('belum dikonfigurasi', $response->json('message'));
+
+        // Zero HTTP requests sent to root /
+        Http::assertNothingSent();
+    }
+
+    /**
+     * Test sending ping test message via dedicated endpoint with recipient when session is ready.
+     */
+    public function test_openwa_send_test_message_dedicated_endpoint(): void
+    {
+        Http::fake([
+            'http://localhost:3000/api/sessions/payroll_session/status' => Http::response([
+                'status' => 'CONNECTED',
+                'session' => 'payroll_session',
+            ], 200),
+            'http://localhost:3000/api/sessions/payroll_session/messages/send-text' => Http::response([
+                'response' => 'msg-ping-dedicated-456',
+                'status' => 'success',
+            ], 200),
+        ]);
+
+        $response = $this->actingAs($this->superAdmin)->postJson(route('settings.whatsapp.send-test-message'), [
+            'recipient' => '081234567890',
+        ]);
+
+        $response->assertOk();
+        $response->assertJson([
+            'success' => true,
+            'message_id' => 'msg-ping-dedicated-456',
+            'status' => 'sent',
+        ]);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'http://localhost:3000/api/sessions/payroll_session/messages/send-text'
+                && $request->header('X-API-Key')[0] === 'test-openwa-api-key'
+                && $request['chatId'] === '6281234567890@c.us';
+        });
+    }
+
+    /**
+     * Test sending test message fails safely when OpenWA session is not ready (e.g. PAIRING/QR).
+     */
+    public function test_openwa_send_test_message_refuses_when_session_not_ready(): void
+    {
+        Http::fake([
+            'http://localhost:3000/api/sessions/payroll_session/status' => Http::response([
+                'status' => 'PAIRING',
+                'message' => 'Waiting for QR scan',
+            ], 200),
+        ]);
+
+        $response = $this->actingAs($this->superAdmin)->postJson(route('settings.whatsapp.send-test-message'), [
+            'recipient' => '081234567890',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJson([
+            'success' => false,
+            'session_status' => 'PAIRING',
+        ]);
+
+        // Asserts NO message was sent to send-text
+        Http::assertNotSent(function ($request) {
+            return str_contains($request->url(), 'messages/send-text');
+        });
+    }
+
+    /**
      * Test sending ping test message via OpenWA with normalized phone and X-API-Key header.
      */
     public function test_openwa_send_test_message_ping_success(): void
     {
         Http::fake([
+            'http://localhost:3000/api/sessions/payroll_session/status' => Http::response([
+                'status' => 'CONNECTED',
+                'session' => 'payroll_session',
+            ], 200),
             'http://localhost:3000/api/sessions/payroll_session/messages/send-text' => Http::response([
                 'response' => 'message-ping-id-123',
                 'status' => 'success',
@@ -350,7 +469,7 @@ class OpenWaGatewayTest extends TestCase
     }
 
     /**
-     * Test sending PDF document via OpenWA in Base64 Data URI mode.
+     * Test sending PDF document via OpenWA in pure Base64 mode (matching OpenWA documentation).
      */
     public function test_openwa_send_document_base64_mode_success(): void
     {
@@ -388,11 +507,78 @@ class OpenWaGatewayTest extends TestCase
             $isCorrectUrl = $request->url() === 'http://localhost:3000/api/sessions/payroll_session/messages/send-document';
             $hasApiKey = $request->header('X-API-Key')[0] === 'test-openwa-api-key';
             $isChatId = $request['chatId'] === '6281234567890@c.us';
-            $isBase64 = str_starts_with($request['data'] ?? '', 'data:application/pdf;base64,');
+            // Pure base64 without 'data:application/pdf;base64,' prefix
+            $isPureBase64 = ! empty($request['base64'])
+                && ! str_starts_with($request['base64'], 'data:')
+                && base64_decode($request['base64'], true) !== false;
             $isPdfMime = $request['mimetype'] === 'application/pdf';
+            $isFilename = str_ends_with($request['filename'] ?? '', '.pdf');
+            $hasCaption = ! empty($request['caption']);
 
-            return $isCorrectUrl && $hasApiKey && $isChatId && $isBase64 && $isPdfMime;
+            return $isCorrectUrl && $hasApiKey && $isChatId && $isPureBase64 && $isPdfMime && $isFilename && $hasCaption;
         });
+    }
+
+    /**
+     * Test VOID payslip is refused for delivery.
+     */
+    public function test_openwa_refuses_void_payslip(): void
+    {
+        $this->finalizedPayslip->update(['status' => PayslipStatus::VOIDED->value]);
+        Http::fake();
+
+        $delivery = PayslipDelivery::create([
+            'payslip_id' => $this->finalizedPayslip->id,
+            'channel' => DeliveryChannel::WHATSAPP->value,
+            'recipient' => '6281234567890',
+            'status' => DeliveryStatus::QUEUED->value,
+            'idempotency_key' => 'wa_test_void_payslip',
+            'attempt_count' => 0,
+        ]);
+
+        $job = new SendPayslipWhatsAppJob($delivery->id);
+        $job->handle(
+            app(PayslipPdfService::class),
+            app(AuditLogService::class),
+            app(WhatsAppManager::class)
+        );
+
+        Http::assertNothingSent();
+
+        $delivery->refresh();
+        $this->assertEquals(DeliveryStatus::FAILED->value, $delivery->status);
+        $this->assertEquals('SLIP_VOIDED', $delivery->last_error_code);
+    }
+
+    /**
+     * Test recipient phone mismatch between delivery and employee fails safely.
+     */
+    public function test_openwa_refuses_recipient_mismatch(): void
+    {
+        Http::fake();
+
+        // Delivery recipient is different from employee1 phone (+6281234567890)
+        $delivery = PayslipDelivery::create([
+            'payslip_id' => $this->finalizedPayslip->id,
+            'channel' => DeliveryChannel::WHATSAPP->value,
+            'recipient' => '6289999999999', // Mismatched recipient
+            'status' => DeliveryStatus::QUEUED->value,
+            'idempotency_key' => 'wa_test_mismatch',
+            'attempt_count' => 0,
+        ]);
+
+        $job = new SendPayslipWhatsAppJob($delivery->id);
+        $job->handle(
+            app(PayslipPdfService::class),
+            app(AuditLogService::class),
+            app(WhatsAppManager::class)
+        );
+
+        Http::assertNothingSent();
+
+        $delivery->refresh();
+        $this->assertEquals(DeliveryStatus::FAILED->value, $delivery->status);
+        $this->assertEquals('RECIPIENT_MISMATCH', $delivery->last_error_code);
     }
 
     /**

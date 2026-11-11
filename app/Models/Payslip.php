@@ -26,6 +26,7 @@ class Payslip extends Model
         'email_snapshot',
         'phone_snapshot',
         'working_days_snapshot',
+        'absent_days',
         'period_month_snapshot',
         'period_start_date_snapshot',
         'period_end_date_snapshot',
@@ -72,6 +73,7 @@ class Payslip extends Model
     {
         return [
             'working_days_snapshot' => 'integer',
+            'absent_days' => 'decimal:2',
             'period_start_date_snapshot' => 'date',
             'period_end_date_snapshot' => 'date',
             'basic_salary' => 'decimal:2',

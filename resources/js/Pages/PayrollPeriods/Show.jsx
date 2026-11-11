@@ -15,6 +15,7 @@ import {
     RefreshCw,
     Search,
     Send,
+    ShieldCheck,
     Smartphone,
     Sparkles,
     Trash2,
@@ -239,6 +240,17 @@ export default function PayrollPeriodsShow({
                                 <Clock className="h-3.5 w-3.5" />
                                 <span>Data Lembur ({overtimeEntries?.length || 0})</span>
                             </button>
+                        )}
+
+                        {(can('payroll.security.view') || can('payslips.view')) && (
+                            <Link
+                                href={route('payroll-security.index', { period_id: period.id })}
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-800 shadow-xs hover:bg-amber-100 transition"
+                                title="Buka modul Payroll Security untuk periode ini"
+                            >
+                                <ShieldCheck className="h-3.5 w-3.5 text-amber-600" />
+                                <span>Payroll Security</span>
+                            </Link>
                         )}
 
                         {can('payslips.manage') && (period.status === 'draft' || period.status === 'changes_requested') && (
@@ -471,6 +483,7 @@ export default function PayrollPeriodsShow({
                                         <tr>
                                             <th className="px-6 py-3.5">Nomor Slip & Karyawan</th>
                                             <th className="px-6 py-3.5">Departemen & Posisi</th>
+                                            <th className="px-4 py-3.5 text-center">Absen</th>
                                             <th className="px-6 py-3.5 text-right">Pendapatan</th>
                                             <th className="px-6 py-3.5 text-right">Potongan</th>
                                             <th className="px-6 py-3.5 text-right">Gaji Bersih</th>
@@ -501,6 +514,16 @@ export default function PayrollPeriodsShow({
                                                         <div className="text-slate-400 text-[11px] mt-0.5">
                                                             {slip.department_snapshot || 'Umum'}
                                                         </div>
+                                                    </td>
+
+                                                    <td className="px-4 py-4 text-center font-mono">
+                                                        {Number(slip.absent_days || 0) > 0 ? (
+                                                            <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800">
+                                                                {Number(slip.absent_days)} hr
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-400 text-xs">-</span>
+                                                        )}
                                                     </td>
 
                                                     <td className="px-6 py-4 text-right font-medium text-slate-700">

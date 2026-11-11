@@ -248,8 +248,19 @@
   $valBpjsKes = $itemBpjsKes ? (float) $itemBpjsKes->amount : 0;
 
   $itemSic = $getItem(['ATT_SIC', 'ATTENDANCE_CUT_SIC', 'POT_ABSEN'], ['S,I,C', 'S/I/C', 'ABSEN'], 'deduction');
-  $qtySic = $itemSic && (float) $itemSic->quantity > 0 ? (int) round((float) $itemSic->quantity) : 0;
-  $valSic = $itemSic ? (float) $itemSic->amount : 0;
+  $attItems = $items->filter(function ($i) {
+      $code = strtoupper($i->item_code_snapshot ?? '');
+      return ($i->category === 'attendance_deduction')
+          || str_starts_with($code, 'ATT_CUT_')
+          || in_array($code, ['ATT_SIC', 'ATTENDANCE_CUT_SIC', 'POT_ABSEN'], true);
+  });
+  if ($attItems->isNotEmpty()) {
+      $valSic = (float) $attItems->sum('amount');
+      $qtySic = (float) (($payslip->absent_days ?? 0) > 0 ? $payslip->absent_days : ($itemSic && (float) $itemSic->quantity > 0 ? $itemSic->quantity : ($attItems->first()->quantity ?? 0)));
+  } else {
+      $qtySic = $itemSic && (float) $itemSic->quantity > 0 ? (float) $itemSic->quantity : 0;
+      $valSic = $itemSic ? (float) $itemSic->amount : 0;
+  }
 
   $itemAlpa = $getItem(['ATT_ALPA', 'ALPHA_CUT', 'POT_ALPA'], ['ALPA'], 'deduction');
   $qtyAlpa = $itemAlpa && (float) $itemAlpa->quantity > 0 ? (int) round((float) $itemAlpa->quantity) : 0;

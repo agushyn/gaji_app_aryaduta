@@ -7,27 +7,107 @@ use App\Services\WhatsApp\DTO\WhatsAppSendResult;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class OpenWaClient
 {
+    protected string $baseUrl;
+
+    protected string $rawBaseUrl;
+
     public function __construct(
-        protected string $baseUrl,
+        string $baseUrl,
         protected string $apiKey,
         protected string $sessionId = 'default',
         protected int $connectionTimeout = 10,
         protected int $requestTimeout = 30
     ) {
-        $this->baseUrl = rtrim(trim($baseUrl), '/');
+        $this->rawBaseUrl = trim($baseUrl);
+        $this->baseUrl = self::normalizeBaseUrl($baseUrl);
         $this->sessionId = trim($sessionId) !== '' ? trim($sessionId) : 'default';
     }
 
     /**
-     * Get base URL of the OpenWA Gateway.
+     * Normalize any user-provided Base URL to guarantee a valid absolute URL ending in /api.
+     * Handles missing schemes, trailing slashes, missing /api prefix, and preserves custom sub-paths.
+     *
+     * Examples:
+     * - http://100.112.241.87:2785       => http://100.112.241.87:2785/api
+     * - http://100.112.241.87:2785/      => http://100.112.241.87:2785/api
+     * - http://100.112.241.87:2785/api   => http://100.112.241.87:2785/api
+     * - http://100.112.241.87:2785/api/  => http://100.112.241.87:2785/api
+     * - https://wa.example.com           => https://wa.example.com/api
+     * - 100.112.241.87:2785              => http://100.112.241.87:2785/api
+     */
+    public static function normalizeBaseUrl(?string $url): string
+    {
+        $raw = trim((string) $url);
+        if ($raw === '') {
+            return '';
+        }
+
+        // Add scheme if missing (only if no RFC 3986 scheme is present)
+        if (! preg_match('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', $raw)) {
+            $raw = 'http://'.$raw;
+        }
+
+        $parts = parse_url($raw);
+        if ($parts === false || empty($parts['host'])) {
+            return '';
+        }
+
+        $scheme = strtolower($parts['scheme'] ?? 'http');
+        $host = $parts['host'];
+        $port = isset($parts['port']) ? ':'.$parts['port'] : '';
+        $path = trim($parts['path'] ?? '', '/');
+
+        // Check if path already ends with 'api'
+        if ($path === '' || $path === '/') {
+            $path = 'api';
+        } elseif (! preg_match('#(^|/)api$#i', $path)) {
+            $path = $path.'/api';
+        }
+
+        return "{$scheme}://{$host}{$port}/{$path}";
+    }
+
+    /**
+     * Validate that the Base URL has a valid scheme and hostname.
+     * Returns null if valid, or a descriptive error message if invalid.
+     */
+    public function validateBaseUrl(): ?string
+    {
+        if (empty($this->rawBaseUrl) || empty($this->baseUrl)) {
+            return 'URL Endpoint API OpenWA belum dikonfigurasi (kosong). Silakan masukkan Base URL gateway OpenWA (contoh: http://localhost:3000/api) pada menu Pengaturan WhatsApp.';
+        }
+
+        $parts = parse_url($this->baseUrl);
+        if ($parts === false || empty($parts['host'])) {
+            return "URL Endpoint API OpenWA ('{$this->rawBaseUrl}') tidak valid atau tidak memiliki hostname/IP yang sah.";
+        }
+
+        if (! in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true)) {
+            return "URL Endpoint API OpenWA ('{$this->rawBaseUrl}') harus menggunakan protokol http:// atau https://.";
+        }
+
+        return null;
+    }
+
+    /**
+     * Get the normalized base URL ending with /api.
      */
     public function getBaseUrl(): string
     {
         return $this->baseUrl;
+    }
+
+    /**
+     * Get the raw base URL as originally entered.
+     */
+    public function getRawBaseUrl(): string
+    {
+        return $this->rawBaseUrl;
     }
 
     /**
@@ -39,25 +119,70 @@ class OpenWaClient
     }
 
     /**
-     * Check API connectivity and session ready state with the OpenWA Gateway.
-     * Distinguishes between API server reachability and WhatsApp session readiness.
+     * Build an explicit final URL by appending a sub-path to the normalized base URL.
+     */
+    public function buildUrl(string $path): string
+    {
+        return rtrim($this->baseUrl, '/').'/'.ltrim($path, '/');
+    }
+
+    /**
+     * Explicit URL builder for session status:
+     * {baseUrl}/sessions/{sessionId}/status
+     */
+    public function buildSessionStatusUrl(): string
+    {
+        return $this->buildUrl("sessions/{$this->sessionId}/status");
+    }
+
+    /**
+     * Explicit URL builder for sending plain text:
+     * {baseUrl}/sessions/{sessionId}/messages/send-text
+     */
+    public function buildSendTextUrl(): string
+    {
+        return $this->buildUrl("sessions/{$this->sessionId}/messages/send-text");
+    }
+
+    /**
+     * Explicit URL builder for sending document PDF:
+     * {baseUrl}/sessions/{sessionId}/messages/send-document
+     */
+    public function buildSendDocumentUrl(): string
+    {
+        return $this->buildUrl("sessions/{$this->sessionId}/messages/send-document");
+    }
+
+    /**
+     * Explicit URL builder for sessions list:
+     * {baseUrl}/sessions
+     */
+    public function buildSessionsListUrl(): string
+    {
+        return $this->buildUrl('sessions');
+    }
+
+    /**
+     * Test gateway HTTP connectivity without requiring a recipient or sending any message.
+     * Verifies hostname reachability, port availability, and API Key validity.
      *
      * @return array{success: bool, api_connected: bool, session_status: string, is_ready: bool, session_id: string, message: string}
      */
-    public function checkSessionStatus(): array
+    public function testConnectivity(): array
     {
-        if (empty($this->baseUrl)) {
+        $validationError = $this->validateBaseUrl();
+        if ($validationError !== null) {
             return [
                 'success' => false,
                 'api_connected' => false,
-                'session_status' => 'UNCONFIGURED',
+                'session_status' => 'INVALID_CONFIG',
                 'is_ready' => false,
                 'session_id' => $this->sessionId,
-                'message' => 'URL Endpoint API OpenWA belum dikonfigurasi.',
+                'message' => $validationError,
             ];
         }
 
-        $statusUrl = "{$this->baseUrl}/sessions/{$this->sessionId}/status";
+        $statusUrl = $this->buildSessionStatusUrl();
 
         try {
             $response = $this->client()
@@ -65,13 +190,140 @@ class OpenWaClient
                 ->timeout($this->requestTimeout)
                 ->get($statusUrl);
 
+            $this->logDiagnostic('test_connectivity', $statusUrl, $response);
+
             // Handle 404: Session not created/found
             if ($response->status() === 404) {
-                // Fallback attempt: check /sessions list to verify API Key validity
+                // Check if API endpoint is reachable by querying /sessions
+                $sessionsUrl = $this->buildSessionsListUrl();
                 $sessionsResponse = $this->client()
                     ->connectTimeout($this->connectionTimeout)
                     ->timeout($this->requestTimeout)
-                    ->get("{$this->baseUrl}/sessions");
+                    ->get($sessionsUrl);
+
+                $this->logDiagnostic('test_connectivity_sessions_list', $sessionsUrl, $sessionsResponse);
+
+                if ($sessionsResponse->successful()) {
+                    return [
+                        'success' => true,
+                        'api_connected' => true,
+                        'session_status' => 'NOT_FOUND',
+                        'is_ready' => false,
+                        'session_id' => $this->sessionId,
+                        'message' => "Koneksi ke gateway OpenWA ({$this->baseUrl}) berhasil, namun session '{$this->sessionId}' belum dibuat di server OpenWA.",
+                    ];
+                }
+
+                return [
+                    'success' => false,
+                    'api_connected' => true,
+                    'session_status' => 'NOT_FOUND',
+                    'is_ready' => false,
+                    'session_id' => $this->sessionId,
+                    'message' => "Session ID '{$this->sessionId}' tidak ditemukan pada gateway OpenWA ({$statusUrl}).",
+                ];
+            }
+
+            // Handle 401 / 403: API Key Invalid
+            if ($response->status() === 401 || $response->status() === 403) {
+                return [
+                    'success' => false,
+                    'api_connected' => false,
+                    'session_status' => 'UNAUTHORIZED',
+                    'is_ready' => false,
+                    'session_id' => $this->sessionId,
+                    'message' => "Koneksi ke gateway OpenWA ditolak: API Key tidak valid atau otorisasi gagal (HTTP {$response->status()}).",
+                ];
+            }
+
+            if ($response->failed()) {
+                return [
+                    'success' => false,
+                    'api_connected' => false,
+                    'session_status' => 'ERROR',
+                    'is_ready' => false,
+                    'session_id' => $this->sessionId,
+                    'message' => "Gateway OpenWA mengembalikan galat HTTP {$response->status()} pada {$statusUrl}.",
+                ];
+            }
+
+            $json = $response->json() ?? [];
+            $rawStatus = $json['status'] ?? ($json['state'] ?? ($json['data']['status'] ?? ($json['data']['state'] ?? 'CONNECTED')));
+            $statusUpper = strtoupper((string) $rawStatus);
+            $isReady = in_array($statusUpper, ['CONNECTED', 'READY', 'NORMAL', 'OPEN', 'PAIRING_READY'], true);
+
+            return [
+                'success' => true,
+                'api_connected' => true,
+                'session_status' => $statusUpper,
+                'is_ready' => $isReady,
+                'session_id' => $this->sessionId,
+                'message' => "Koneksi ke gateway OpenWA ({$this->baseUrl}) berhasil terverifikasi! Status session: {$statusUpper} (HTTP 200).",
+            ];
+        } catch (ConnectionException $e) {
+            $this->logDiagnostic('test_connectivity', $statusUrl, null, $e);
+
+            return [
+                'success' => false,
+                'api_connected' => false,
+                'session_status' => 'UNREACHABLE',
+                'is_ready' => false,
+                'session_id' => $this->sessionId,
+                'message' => "Tidak dapat menghubungi server OpenWA di {$this->baseUrl} (Connection Timeout / Network Unreachable).",
+            ];
+        } catch (Throwable $e) {
+            $this->logDiagnostic('test_connectivity', $statusUrl, null, $e);
+
+            return [
+                'success' => false,
+                'api_connected' => false,
+                'session_status' => 'ERROR',
+                'is_ready' => false,
+                'session_id' => $this->sessionId,
+                'message' => 'Kesalahan saat menguji koneksi OpenWA: '.$this->sanitizeError($e->getMessage()),
+            ];
+        }
+    }
+
+    /**
+     * Check API connectivity and session ready state with the OpenWA Gateway.
+     * Distinguishes between API server reachability and WhatsApp session readiness.
+     *
+     * @return array{success: bool, api_connected: bool, session_status: string, is_ready: bool, session_id: string, message: string}
+     */
+    public function checkSessionStatus(): array
+    {
+        $validationError = $this->validateBaseUrl();
+        if ($validationError !== null) {
+            return [
+                'success' => false,
+                'api_connected' => false,
+                'session_status' => 'INVALID_CONFIG',
+                'is_ready' => false,
+                'session_id' => $this->sessionId,
+                'message' => $validationError,
+            ];
+        }
+
+        $statusUrl = $this->buildSessionStatusUrl();
+
+        try {
+            $response = $this->client()
+                ->connectTimeout($this->connectionTimeout)
+                ->timeout($this->requestTimeout)
+                ->get($statusUrl);
+
+            $this->logDiagnostic('check_session_status', $statusUrl, $response);
+
+            // Handle 404: Session not created/found
+            if ($response->status() === 404) {
+                $sessionsUrl = $this->buildSessionsListUrl();
+                $sessionsResponse = $this->client()
+                    ->connectTimeout($this->connectionTimeout)
+                    ->timeout($this->requestTimeout)
+                    ->get($sessionsUrl);
+
+                $this->logDiagnostic('check_session_status_sessions_list', $sessionsUrl, $sessionsResponse);
 
                 if ($sessionsResponse->successful()) {
                     return [
@@ -90,7 +342,7 @@ class OpenWaClient
                     'session_status' => 'NOT_FOUND',
                     'is_ready' => false,
                     'session_id' => $this->sessionId,
-                    'message' => "Session ID '{$this->sessionId}' tidak ditemukan pada gateway OpenWA (HTTP 404).",
+                    'message' => "Session ID '{$this->sessionId}' tidak ditemukan pada gateway OpenWA (HTTP 404 pada {$statusUrl}).",
                 ];
             }
 
@@ -113,7 +365,7 @@ class OpenWaClient
                     'session_status' => 'ERROR',
                     'is_ready' => false,
                     'session_id' => $this->sessionId,
-                    'message' => "Gateway OpenWA mengembalikan status galat: HTTP {$response->status()}.",
+                    'message' => "Gateway OpenWA mengembalikan status galat HTTP {$response->status()} pada {$statusUrl}.",
                 ];
             }
 
@@ -142,6 +394,8 @@ class OpenWaClient
                 'message' => $message,
             ];
         } catch (ConnectionException $e) {
+            $this->logDiagnostic('check_session_status', $statusUrl, null, $e);
+
             return [
                 'success' => false,
                 'api_connected' => false,
@@ -151,6 +405,8 @@ class OpenWaClient
                 'message' => "Tidak dapat menghubungi server OpenWA di {$this->baseUrl} (Connection Timeout / Network Unreachable).",
             ];
         } catch (Throwable $e) {
+            $this->logDiagnostic('check_session_status', $statusUrl, null, $e);
+
             return [
                 'success' => false,
                 'api_connected' => false,
@@ -164,12 +420,16 @@ class OpenWaClient
 
     /**
      * Send a plain text message via OpenWA REST API.
-     *
-     * Endpoint: POST /sessions/{sessionId}/messages/send-text
+     * Explicit Endpoint: POST {baseUrl}/sessions/{sessionId}/messages/send-text
      */
     public function sendText(string $chatId, string $text, ?string $idempotencyKey = null): WhatsAppSendResult
     {
-        $url = "{$this->baseUrl}/sessions/{$this->sessionId}/messages/send-text";
+        $validationError = $this->validateBaseUrl();
+        if ($validationError !== null) {
+            return WhatsAppSendResult::failure('CONFIG_ERROR', $validationError);
+        }
+
+        $url = $this->buildSendTextUrl();
 
         $payload = [
             'chatId' => $chatId,
@@ -188,20 +448,23 @@ class OpenWaClient
                 ->timeout($this->requestTimeout)
                 ->post($url, $payload);
 
+            $this->logDiagnostic('send_text', $url, $response);
+
             return $this->parseResponse($response, 'send-text');
         } catch (Throwable $e) {
+            $this->logDiagnostic('send_text', $url, null, $e);
+
             return WhatsAppSendResult::failure(
                 'OPENWA_HTTP_EXCEPTION',
-                $this->sanitizeError("Gagal menghubungi endpoint OpenWA send-text: {$e->getMessage()}")
+                $this->sanitizeError("Gagal menghubungi endpoint OpenWA send-text ({$url}): {$e->getMessage()}")
             );
         }
     }
 
     /**
      * Send a document (PDF) message via OpenWA REST API.
-     * Supports both Base64 Data URI mode and Signed URL mode.
-     *
-     * Endpoint: POST /sessions/{sessionId}/messages/send-document
+     * Supports Base64 mode (prioritized, pure base64 without Data URI prefix) and Signed URL mode.
+     * Explicit Endpoint: POST {baseUrl}/sessions/{sessionId}/messages/send-document
      */
     public function sendDocument(
         string $chatId,
@@ -212,7 +475,25 @@ class OpenWaClient
         string $mode = 'base64',
         ?string $idempotencyKey = null
     ): WhatsAppSendResult {
-        $url = "{$this->baseUrl}/sessions/{$this->sessionId}/messages/send-document";
+        $validationError = $this->validateBaseUrl();
+        if ($validationError !== null) {
+            return WhatsAppSendResult::failure('CONFIG_ERROR', $validationError);
+        }
+
+        $url = $this->buildSendDocumentUrl();
+        $contentLength = strlen($pdfContent);
+        // Media size threshold: 15 MB for direct base64 transfer in HTTP JSON
+        $maxBase64Bytes = 15 * 1024 * 1024;
+
+        if ($contentLength > $maxBase64Bytes && ! empty($documentUrl)) {
+            // Automatic safe fallback to signed URL mode if base64 payload exceeds HTTP gateway limit
+            $mode = 'url';
+        } elseif ($contentLength > $maxBase64Bytes && empty($documentUrl)) {
+            return WhatsAppSendResult::failure(
+                'PAYLOAD_TOO_LARGE',
+                'Ukuran berkas PDF (' . round($contentLength / (1024 * 1024), 2) . ' MB) melebihi batas transmisi JSON (15 MB).'
+            );
+        }
 
         $payload = [
             'chatId' => $chatId,
@@ -224,11 +505,8 @@ class OpenWaClient
             // URL mode: OpenWA fetches the document from the temporary signed route
             $payload['url'] = $documentUrl;
         } else {
-            // Base64 mode: self-contained binary payload
-            $base64 = base64_encode($pdfContent);
-            $dataUri = 'data:application/pdf;base64,'.$base64;
-            $payload['data'] = $dataUri;
-            $payload['file'] = $dataUri;
+            // Base64 mode: pure base64 encoded string of the PDF content (NO data URI prefix, NO file path)
+            $payload['base64'] = base64_encode($pdfContent);
         }
 
         if (! empty($caption)) {
@@ -247,11 +525,15 @@ class OpenWaClient
                 ->timeout($this->requestTimeout)
                 ->post($url, $payload);
 
+            $this->logDiagnostic('send_document', $url, $response);
+
             return $this->parseResponse($response, 'send-document');
         } catch (Throwable $e) {
+            $this->logDiagnostic('send_document', $url, null, $e);
+
             return WhatsAppSendResult::failure(
                 'OPENWA_HTTP_EXCEPTION',
-                $this->sanitizeError("Gagal menghubungi endpoint OpenWA send-document: {$e->getMessage()}")
+                $this->sanitizeError("Gagal menghubungi endpoint OpenWA send-document ({$url}): {$e->getMessage()}")
             );
         }
     }
@@ -271,6 +553,44 @@ class OpenWaClient
         }
 
         return Http::withHeaders($headers);
+    }
+
+    /**
+     * Safe diagnostic logging that logs hostname, endpoint path, HTTP status, and sanitized response body.
+     * NEVER logs API keys, bearer tokens, or sensitive credentials.
+     */
+    protected function logDiagnostic(string $action, string $url, ?Response $response = null, ?Throwable $exception = null): void
+    {
+        $parts = parse_url($url);
+        $host = ($parts['host'] ?? 'unknown').(isset($parts['port']) ? ':'.$parts['port'] : '');
+        $path = $parts['path'] ?? '/';
+
+        $context = [
+            'gateway' => 'openwa',
+            'action' => $action,
+            'hostname' => $host,
+            'path' => $path,
+            'final_url' => $url,
+            'session_id' => $this->sessionId,
+        ];
+
+        if ($response !== null) {
+            $context['http_status'] = $response->status();
+            $body = $response->body();
+            $context['response_body'] = $this->sanitizeError(mb_substr($body, 0, 500));
+        }
+
+        if ($exception !== null) {
+            $context['exception_type'] = get_class($exception);
+            $context['exception'] = $this->sanitizeError($exception->getMessage());
+        }
+
+        if ($response && $response->successful()) {
+            Log::info("OpenWA [{$action}] sukses ke {$host}{$path} (HTTP {$response->status()})", $context);
+        } else {
+            $status = $response ? $response->status() : ($context['exception_type'] ?? 'EXCEPTION');
+            Log::warning("OpenWA [{$action}] gagal pada {$host}{$path} ({$status})", $context);
+        }
     }
 
     /**
@@ -326,13 +646,15 @@ class OpenWaClient
     }
 
     /**
-     * Sanitize error message to ensure API Keys and sensitive tokens are never exposed.
+     * Sanitize error message to ensure API Keys, sensitive tokens, PDF base64, and salary amounts are never exposed.
      */
     protected function sanitizeError(string $rawMessage): string
     {
         $sanitized = preg_replace('/(bearer|token|secret|password|key|auth|api-key)[:=\s]+[^\s;&",]+/i', '$1=***', $rawMessage);
         $sanitized = preg_replace('/[a-zA-Z0-9_\-]{32,}/', '***', $sanitized ?? '');
         $sanitized = preg_replace('/data:application\/pdf;base64,[A-Za-z0-9+\/=]+/', '[BASE64_PDF_OMITTED]', $sanitized ?? '');
+        $sanitized = preg_replace('/("base64"\s*:\s*")[^"]+(")/', '$1[BASE64_OMITTED]$2', $sanitized ?? '');
+        $sanitized = preg_replace('/(Rp\.?\s*)[0-9\.\,]+/i', '$1***', $sanitized ?? '');
 
         return mb_substr(trim($sanitized ?? ''), 0, 500);
     }

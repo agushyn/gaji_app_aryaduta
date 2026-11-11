@@ -67,7 +67,17 @@ class SendPayslipWhatsAppJob implements ShouldQueue
             return;
         }
 
-        // Strict rule: do not send if payslip is not finalized
+        // Strict rule: do not send if payslip is not finalized or has been voided
+        if ($payslip->status === PayslipStatus::VOIDED->value) {
+            $delivery->update([
+                'status' => DeliveryStatus::FAILED->value,
+                'last_error_code' => 'SLIP_VOIDED',
+                'last_error_summary' => 'Slip gaji telah dibatalkan (VOID), pengiriman WhatsApp dibatalkan demi integritas data.',
+            ]);
+
+            return;
+        }
+
         if ($payslip->status !== PayslipStatus::FINALIZED->value) {
             $delivery->update([
                 'status' => DeliveryStatus::FAILED->value,
@@ -89,14 +99,27 @@ class SendPayslipWhatsAppJob implements ShouldQueue
             return;
         }
 
+        $normalizedPhone = PhoneNumberNormalizer::normalize($delivery->recipient);
+
+        // Security check: verify delivery recipient matches the employee on the payslip
+        $employeePhone = $payslip->phone_snapshot ?? $payslip->employee?->phone;
+        $normalizedEmployeePhone = PhoneNumberNormalizer::normalize($employeePhone);
+        if (! empty($normalizedEmployeePhone) && $normalizedPhone !== $normalizedEmployeePhone) {
+            $delivery->update([
+                'status' => DeliveryStatus::FAILED->value,
+                'last_error_code' => 'RECIPIENT_MISMATCH',
+                'last_error_summary' => 'Nomor WhatsApp tujuan tidak sesuai dengan data nomor telepon karyawan pada slip gaji.',
+            ]);
+
+            return;
+        }
+
         // Rate limiting check: if carrier / gateway throttled, back off
         if (! $whatsAppManager->checkRateLimit()) {
             $this->release(30);
 
             return;
         }
-
-        $normalizedPhone = PhoneNumberNormalizer::normalize($delivery->recipient);
 
         // Register new attempt record
         $attemptNumber = $delivery->attempt_count + 1;

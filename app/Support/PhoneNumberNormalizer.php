@@ -103,4 +103,50 @@ class PhoneNumberNormalizer
 
         return '+'.$normalized;
     }
+
+    /**
+     * Format a phone number into an OpenWA chatId ({normalized_number}@c.us).
+     *
+     * Rules:
+     * 1. Remove spaces, '+', hyphens, parentheses, and separation characters.
+     * 2. Convert Indonesian numbers starting with '08' to '628'.
+     * 3. Preserve numbers starting with '62'.
+     * 4. Validate number format: returns null if empty or invalid.
+     * 5. Append '@c.us' suffix exactly once (prevents duplicate suffix like @c.us@c.us).
+     */
+    public static function toOpenWaChatId(?string $number): ?string
+    {
+        if (empty($number)) {
+            return null;
+        }
+
+        $raw = trim($number);
+
+        // Strip existing @c.us or @g.us suffix first to prevent duplicate suffix
+        if (str_ends_with($raw, '@c.us')) {
+            $raw = substr($raw, 0, -5);
+        } elseif (str_ends_with($raw, '@g.us')) {
+            $raw = substr($raw, 0, -5);
+        }
+
+        // Remove spaces, '+', hyphens, parentheses, dots, commas, slashes
+        $cleaned = preg_replace('/[\s\+\-\(\)\.,\/]/', '', $raw);
+
+        // Strip redundant 0 after country code 62 (e.g. 6208... -> 628...)
+        if (str_starts_with($cleaned, '6208')) {
+            $cleaned = '62'.substr($cleaned, 3);
+        }
+
+        // Convert leading 08 to 628
+        if (str_starts_with($cleaned, '08')) {
+            $cleaned = '62'.substr($cleaned, 1);
+        }
+
+        // Validate number
+        if (! self::isValid($cleaned)) {
+            return null;
+        }
+
+        return "{$cleaned}@c.us";
+    }
 }

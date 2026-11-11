@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Enums\PayrollPeriodStatus;
 use App\Enums\PayslipStatus;
 use App\Models\Employee;
-use App\Models\PayComponent;
 use App\Models\PayrollPeriod;
 use App\Models\Payslip;
 use App\Models\Position;
@@ -28,12 +27,19 @@ class SecurityPayrollTest extends TestCase
     use RefreshDatabase;
 
     protected User $admin;
+
     protected User $personalia;
+
     protected User $auditor;
+
     protected PayrollPeriod $period;
+
     protected Position $securityPosition;
+
     protected Position $regularPosition;
+
     protected SecurityPayrollCalculationService $securityService;
+
     protected PayslipService $payslipService;
 
     protected function setUp(): void
@@ -444,5 +450,75 @@ class SecurityPayrollTest extends TestCase
             str_contains($response->headers->get('content-disposition'), 'Rekap_Lembur_Security_')
         );
     }
-}
 
+    /**
+     * Simplified input: user posts only working days + overtime hours.
+     */
+    public function test_can_update_summary_with_working_days_and_overtime_via_http(): void
+    {
+        $sec = $this->createSecurityEmployee('SEC-SIMPLE-01', 'Security Input Sederhana');
+
+        $response = $this->actingAs($this->personalia)->post(route('payroll-security.summary.update'), [
+            'payroll_period_id' => $this->period->id,
+            'employee_id' => $sec->id,
+            'total_work_days' => 26,
+            'gross_overtime_hours' => 40.0,
+        ]);
+
+        $response->assertRedirect();
+
+        $summary = SecurityOvertimeSummary::where('payroll_period_id', $this->period->id)
+            ->where('employee_id', $sec->id)
+            ->first();
+
+        $this->assertNotNull($summary);
+        $this->assertEquals(26, (int) $summary->total_work_days);
+        $this->assertEquals(31, (int) $summary->total_days);
+        $this->assertEquals(5, (int) $summary->total_absent_days); // 31 - 26
+        $this->assertEquals(40.0, (float) $summary->gross_overtime_hours);
+        // break_deduction_default = 0 from seeder: net 40h, first 5h, subsequent 35h
+        $this->assertEquals(1085000.0, (float) $summary->total_overtime_cost);
+    }
+
+    /**
+     * Working days greater than period length must be rejected.
+     */
+    public function test_working_days_exceeding_period_length_is_rejected(): void
+    {
+        $sec = $this->createSecurityEmployee('SEC-SIMPLE-02', 'Security Over Hari');
+
+        $response = $this->actingAs($this->personalia)->post(route('payroll-security.summary.update'), [
+            'payroll_period_id' => $this->period->id,
+            'employee_id' => $sec->id,
+            'total_work_days' => 40,
+            'gross_overtime_hours' => 10.0,
+        ]);
+
+        $response->assertSessionHasErrors('total_work_days');
+        $this->assertDatabaseMissing('security_overtime_summaries', [
+            'payroll_period_id' => $this->period->id,
+            'employee_id' => $sec->id,
+        ]);
+    }
+
+    /**
+     * Recalculation without overrides must not wipe simplified input values.
+     */
+    public function test_recalculation_without_overrides_preserves_simplified_input(): void
+    {
+        $sec = $this->createSecurityEmployee('SEC-SIMPLE-03', 'Security Presisten');
+
+        $this->securityService->calculateForEmployee($sec, $this->period, null, [
+            'total_work_days' => 25,
+            'gross_overtime_hours' => 40.0,
+            'break_deduction_hours' => 5.0,
+        ]);
+
+        // Simulates batch sync / index auto-calc: no overrides, no attendance rows
+        $recalculated = $this->securityService->calculateForEmployee($sec, $this->period);
+
+        $this->assertEquals(25, (int) $recalculated->total_work_days);
+        $this->assertEquals(40.0, (float) $recalculated->gross_overtime_hours);
+        $this->assertEquals(945000.0, (float) $recalculated->total_overtime_cost);
+    }
+}

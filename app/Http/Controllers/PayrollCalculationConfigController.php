@@ -6,6 +6,7 @@ use App\Http\Requests\StorePayrollCalculationConfigRequest;
 use App\Http\Requests\UpdatePayrollCalculationConfigRequest;
 use App\Models\PayComponent;
 use App\Models\PayrollCalculationConfig;
+use App\Services\AttendanceDeductionService;
 use App\Services\FormulaEvaluatorService;
 use App\Services\OvertimeCalculationService;
 use App\Services\PayrollCalculationConfigService;
@@ -25,7 +26,8 @@ class PayrollCalculationConfigController extends Controller
     public function __construct(
         protected PayrollCalculationConfigService $configService,
         protected FormulaEvaluatorService $formulaEvaluator,
-        protected OvertimeCalculationService $overtimeService
+        protected OvertimeCalculationService $overtimeService,
+        protected AttendanceDeductionService $attendanceDeductionService
     ) {}
 
     /**
@@ -138,6 +140,8 @@ class PayrollCalculationConfigController extends Controller
             'configs' => $configs,
             'counts' => $counts,
             'overtimeSettings' => $overtimeSettings,
+            'attendanceDeductionSettings' => $this->attendanceDeductionService->getConfig(),
+            'deductiblePayComponents' => $this->attendanceDeductionService->getDeductiblePayComponents(),
             'filters' => $request->only(['search', 'day_type', 'status']),
         ]);
     }
@@ -373,5 +377,34 @@ class PayrollCalculationConfigController extends Controller
         return redirect()
             ->route('payroll-configurations.index')
             ->with('success', 'Pengaturan jam lembur dan batas potongan istirahat berhasil disimpan ke database.');
+    }
+
+    /**
+     * Update attendance deduction settings via dedicated UI form.
+     */
+    public function updateAttendanceDeductionSettings(Request $request): RedirectResponse
+    {
+        $this->authorize('update', PayrollCalculationConfig::class);
+
+        $validated = $request->validate([
+            'is_active' => ['required', 'boolean'],
+            'component_ids' => ['nullable', 'array'],
+            'component_ids.*' => ['integer', 'exists:pay_components,id'],
+        ], [
+            'is_active.required' => 'Status aktif potongan kehadiran wajib ditentukan.',
+            'component_ids.array' => 'Daftar komponen yang dipilih tidak valid.',
+            'component_ids.*.exists' => 'Komponen gaji yang dipilih tidak ditemukan dalam master komponen.',
+        ]);
+
+        $this->attendanceDeductionService->updateConfig([
+            'is_active' => (bool) $validated['is_active'],
+            'component_ids' => $validated['component_ids'] ?? [],
+        ], $request->user());
+
+        $statusText = ! empty($validated['is_active']) ? 'diaktifkan' : 'dinonaktifkan';
+
+        return redirect()
+            ->route('payroll-configurations.index')
+            ->with('success', "Pengaturan potongan kehadiran berhasil disimpan ({$statusText}).");
     }
 }

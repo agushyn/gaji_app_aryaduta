@@ -17,6 +17,7 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\SecurityPayrollController;
+use App\Http\Controllers\SecurityPayrollReportController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\WhatsAppSettingController;
 use App\Http\Controllers\WhatsAppWebhookController;
@@ -112,6 +113,8 @@ Route::middleware(['auth', 'active'])->group(function () {
 
     Route::post('/payroll-configurations/overtime-settings', [PayrollCalculationConfigController::class, 'updateOvertimeSettings'])
         ->name('payroll-configurations.overtime-settings');
+    Route::post('/payroll-configurations/attendance-deduction-settings', [PayrollCalculationConfigController::class, 'updateAttendanceDeductionSettings'])
+        ->name('payroll-configurations.attendance-deduction-settings');
     Route::post('/payroll-configurations/test', [PayrollCalculationConfigController::class, 'test'])
         ->name('payroll-configurations.test');
     Route::post('/payroll-configurations/{payroll_configuration}/duplicate', [PayrollCalculationConfigController::class, 'duplicate'])
@@ -136,10 +139,20 @@ Route::middleware(['auth', 'active'])->group(function () {
     // Modul Payroll Security
     Route::get('/payroll-security', [SecurityPayrollController::class, 'index'])
         ->name('payroll-security.index');
+    Route::get('/payroll-security/reports', [SecurityPayrollReportController::class, 'index'])
+        ->name('payroll-security.reports.index');
+    Route::get('/payroll-security/reports/export/{type}', [SecurityPayrollReportController::class, 'export'])
+        ->name('payroll-security.reports.export');
+    Route::post('/payroll-security/reconciliation/run', [SecurityPayrollReportController::class, 'reconcile'])
+        ->name('payroll-security.reconciliation.run');
     Route::post('/payroll-security/attendance', [SecurityPayrollController::class, 'updateAttendance'])
         ->name('payroll-security.attendance.update');
     Route::post('/payroll-security/summary', [SecurityPayrollController::class, 'updateSummary'])
         ->name('payroll-security.summary.update');
+    Route::post('/payroll-security/bulk', [SecurityPayrollController::class, 'bulkUpdate'])
+        ->name('payroll-security.bulk-update');
+    Route::post('/payroll-security/preview', [SecurityPayrollController::class, 'preview'])
+        ->name('payroll-security.preview');
     Route::post('/payroll-security/config', [SecurityPayrollController::class, 'updateConfig'])
         ->name('payroll-security.config.update');
     Route::post('/payroll-security/periods/{period}/sync', [SecurityPayrollController::class, 'syncPayslips'])
@@ -219,6 +232,7 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::get('/settings/whatsapp', [WhatsAppSettingController::class, 'edit'])->name('settings.whatsapp.edit');
         Route::put('/settings/whatsapp', [WhatsAppSettingController::class, 'update'])->name('settings.whatsapp.update');
         Route::post('/settings/whatsapp/test', [WhatsAppSettingController::class, 'testConnection'])->name('settings.whatsapp.test');
+        Route::post('/settings/whatsapp/send-test-message', [WhatsAppSettingController::class, 'sendTestMessage'])->name('settings.whatsapp.send-test-message');
         Route::post('/settings/whatsapp/session-status', [WhatsAppSettingController::class, 'checkSessionStatus'])->name('settings.whatsapp.session-status');
     });
 

@@ -27,6 +27,7 @@ import {
     TrendingDown,
     TrendingUp,
     User,
+    UserX,
     Wallet,
     X,
 } from 'lucide-react';
@@ -301,6 +302,17 @@ export default function PayslipsShow({ payslip, auditLogs = [], can = {} }) {
     const isApproved = payslip.status === 'approved';
     const isVoided = payslip.status === 'voided';
 
+    // Attendance Deduction breakdown items
+    const attendanceItems = (payslip.items || []).filter((item) =>
+        item.item_type === 'deduction' && (
+            item.category === 'attendance_deduction' ||
+            (item.item_code_snapshot && item.item_code_snapshot.startsWith('ATT_CUT_')) ||
+            ['ATT_SIC', 'ATTENDANCE_CUT_SIC', 'POT_ABSEN'].includes(item.item_code_snapshot)
+        )
+    );
+    const totalAttendanceDeduction = attendanceItems.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
+    const absentDaysNum = Number(payslip.absent_days || 0);
+
     return (
         <AuthenticatedLayout header={`Slip Gaji: ${payslip.slip_number}`}>
             <Head title={`Slip - ${payslip.employee_name_snapshot}`} />
@@ -574,6 +586,22 @@ export default function PayslipsShow({ payslip, auditLogs = [], can = {} }) {
                                     {payslip.phone_snapshot ? `+${payslip.phone_snapshot}` : 'WA tidak diisi'}
                                 </span>
                             </div>
+
+                            <div>
+                                <span className="text-slate-400 block text-[11px] uppercase tracking-wider">Hari Tidak Masuk</span>
+                                <span className="mt-1 font-bold font-mono text-slate-900 block">
+                                    {absentDaysNum > 0 ? (
+                                        <span className="text-amber-800 bg-amber-100 px-2 py-0.5 rounded text-xs">
+                                            {absentDaysNum} Hari
+                                        </span>
+                                    ) : (
+                                        <span className="text-slate-500">0 Hari (Nihil)</span>
+                                    )}
+                                </span>
+                                <span className="text-[10px] text-slate-400 block mt-0.5">
+                                    dari {payslip.working_days_snapshot || 25} hari kerja
+                                </span>
+                            </div>
                         </div>
                     </div>
 
@@ -632,6 +660,46 @@ export default function PayslipsShow({ payslip, auditLogs = [], can = {} }) {
 
                         {/* Deductions & Official Duty Section */}
                         <div className="space-y-4">
+                            {/* Attendance Deductions Breakdown Callout Card */}
+                            {(absentDaysNum > 0 || attendanceItems.length > 0) && (
+                                <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 space-y-2.5 text-xs">
+                                    <div className="flex items-center justify-between border-b border-amber-200/60 pb-2">
+                                        <div className="flex items-center gap-1.5 font-bold text-amber-950">
+                                            <UserX className="h-4 w-4 text-amber-600 shrink-0" />
+                                            <span>Rincian Potongan Kehadiran ({absentDaysNum} Hari Tidak Masuk)</span>
+                                        </div>
+                                        <span className="font-mono font-bold text-amber-900">
+                                            Total: {formatRupiah(totalAttendanceDeduction)}
+                                        </span>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        {attendanceItems.length > 0 ? (
+                                            attendanceItems.map((att, i) => (
+                                                <div key={i} className="flex items-center justify-between bg-white/80 p-2 rounded-lg border border-amber-100">
+                                                    <div>
+                                                        <div className="font-semibold text-slate-800">
+                                                            {att.description_snapshot}
+                                                        </div>
+                                                        {att.rate && Number(att.rate) > 0 && (
+                                                            <div className="text-[10px] text-slate-500 font-mono">
+                                                                Tarif: {formatRupiah(att.rate)}/hari × {Number(att.quantity || absentDaysNum)} hari
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="font-mono font-bold text-rose-700 text-right">
+                                                        {formatRupiah(att.amount)}
+                                                    </div>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div className="text-[11px] text-slate-500 italic">
+                                                Tidak ada komponen gaji yang dipilih untuk dipotong kehadiran.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="rounded-xl border border-slate-200 overflow-hidden">
                                 <div className="bg-rose-50/70 border-b border-rose-100 px-4 py-3 flex items-center justify-between">
                                     <span className="text-xs font-bold uppercase tracking-wider text-rose-900 flex items-center gap-1.5">

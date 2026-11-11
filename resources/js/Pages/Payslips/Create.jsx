@@ -57,6 +57,7 @@ export default function PayslipsCreate({
     const { data, setData, post, processing, errors } = useForm({
         payroll_period_id: defaultPeriodId,
         employee_id: '',
+        absent_days: 0,
         items: initialItems(),
     });
 
@@ -347,6 +348,33 @@ export default function PayslipsCreate({
                                     </div>
                                 </div>
                             )}
+
+                            {/* Hari Tidak Masuk Input */}
+                            <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div>
+                                    <InputLabel value="Jumlah Hari Tidak Masuk (Absen / Sakit / Izin)" className="text-xs font-bold" />
+                                    <p className="text-[11px] text-slate-500 mt-0.5">
+                                        Masukkan jumlah hari karyawan tidak masuk kerja pada periode ini.
+                                    </p>
+                                </div>
+                                <div className="w-full sm:w-44">
+                                    <div className="relative">
+                                        <input
+                                            type="number"
+                                            step="0.5"
+                                            min="0"
+                                            value={data.absent_days}
+                                            onChange={(e) => setData('absent_days', e.target.value)}
+                                            className="w-full text-right rounded-lg border-slate-300 text-xs font-bold font-mono focus:border-indigo-600 focus:ring-indigo-600"
+                                            placeholder="0"
+                                        />
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400">
+                                            Hari
+                                        </span>
+                                    </div>
+                                    <InputError message={errors.absent_days} className="mt-1 text-right" />
+                                </div>
+                            </div>
                         </div>
 
                         {/* Section 2: Dynamic Items Table */}

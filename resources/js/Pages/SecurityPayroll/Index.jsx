@@ -5,35 +5,34 @@ import PrimaryButton from '@/Components/PrimaryButton';
 import SecondaryButton from '@/Components/SecondaryButton';
 import TextInput from '@/Components/TextInput';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, router, useForm, usePage } from '@inertiajs/react';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import {
     AlertCircle,
+    AlertTriangle,
+    BarChart3,
     Calendar,
     Check,
-    CheckCircle,
+    CheckCircle2,
     Clock,
-    Download,
-    Edit3,
+    Eye,
     FileSpreadsheet,
     HelpCircle,
-    Info,
+    Receipt,
     RefreshCw,
+    Save,
     Search,
     Settings,
     Shield,
     ShieldAlert,
     ShieldCheck,
-    Users,
     X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export default function SecurityPayrollIndex({
     periods = [],
     currentPeriod,
-    periodDates = [],
     securityEmployees = [],
-    attendances = {},
     summaries = {},
     activeConfig,
     totalOvertimeAllSecurity = 0,
@@ -42,40 +41,23 @@ export default function SecurityPayrollIndex({
     canConfig = false,
     filters = {},
 }) {
-    const { flash } = usePage().props;
+    const { flash, errors } = usePage().props;
 
     const [search, setSearch] = useState(filters?.search || '');
     const [selectedPeriodId, setSelectedPeriodId] = useState(currentPeriod?.id || '');
 
-    // Modal state for Attendance Cell Editing
-    const [attendanceModalOpen, setAttendanceModalOpen] = useState(false);
-    const [selectedCell, setSelectedCell] = useState(null);
-
-    // Modal state for Summary Overtime / Break Override
-    const [summaryModalOpen, setSummaryModalOpen] = useState(false);
-    const [selectedSummaryEmployee, setSelectedSummaryEmployee] = useState(null);
-
     // Modal state for Formula Configuration
     const [configModalOpen, setConfigModalOpen] = useState(false);
 
-    // Attendance cell form
-    const attendanceForm = useForm({
-        payroll_period_id: currentPeriod?.id || '',
-        employee_id: '',
-        date: '',
-        status: 'present',
-        work_hours: 8,
-        overtime_hours: 0,
-        note: '',
-    });
+    // Modal state for Calculation Breakdown & Preview
+    const [detailModalOpen, setDetailModalOpen] = useState(false);
+    const [selectedEmployee, setSelectedEmployee] = useState(null);
 
-    // Summary override form
-    const summaryForm = useForm({
-        payroll_period_id: currentPeriod?.id || '',
-        employee_id: '',
-        gross_overtime_hours: '',
-        break_deduction_hours: '',
-    });
+    // Per-row edit state for simplified input
+    const [rows, setRows] = useState({});
+    const [savingId, setSavingId] = useState(null);
+    const [bulkSaving, setBulkSaving] = useState(false);
+    const dirtyRef = useRef({});
 
     // Config form
     const configForm = useForm({
@@ -87,6 +69,39 @@ export default function SecurityPayrollIndex({
         max_break_deduction: activeConfig?.max_break_deduction || 20,
         round_rule: activeConfig?.round_rule || 'round',
     });
+
+    const periodDays = currentPeriod?.total_days || (
+        currentPeriod?.start_date && currentPeriod?.end_date
+            ? Math.round((new Date(currentPeriod.end_date) - new Date(currentPeriod.start_date)) / (1000 * 60 * 60 * 24)) + 1
+            : 30
+    );
+
+    // Seed row inputs from server summaries; keep unsaved (dirty) edits intact.
+    useEffect(() => {
+        setRows((prev) => {
+            const map = {};
+            securityEmployees.forEach((emp) => {
+                if (dirtyRef.current[emp.id]) {
+                    map[emp.id] = prev[emp.id];
+                    return;
+                }
+                const s = summaries[emp.id] || {};
+                map[emp.id] = {
+                    present_days: s.present_days ?? s.total_work_days ?? currentPeriod?.working_days ?? '',
+                    off_days: s.off_days ?? s.total_off_days ?? 0,
+                    sick_days: s.sick_days ?? 0,
+                    permission_days: s.permission_days ?? 0,
+                    leave_days: s.leave_days ?? 0,
+                    absent_days: s.absent_days ?? s.total_absent_days ?? 0,
+                    regular_overtime_days: s.regular_overtime_days ?? 0,
+                    regular_overtime_hours: s.regular_overtime_hours ?? s.gross_overtime_hours ?? 0,
+                    off_holiday_overtime_days: s.off_holiday_overtime_days ?? 0,
+                    off_holiday_overtime_hours: s.off_holiday_overtime_hours ?? 0,
+                };
+            });
+            return map;
+        });
+    }, [summaries, currentPeriod?.id, securityEmployees]);
 
     const formatRupiah = (val) => {
         return new Intl.NumberFormat('id-ID', {
@@ -122,68 +137,99 @@ export default function SecurityPayrollIndex({
         );
     };
 
-    // Open cell editor
-    const openCellEditor = (employee, dateObj) => {
-        if (!canManage || !currentPeriod?.is_modifiable) return;
-
-        const key = `${employee.id}_${dateObj.date}`;
-        const existing = attendances[key];
-
-        setSelectedCell({ employee, dateObj, existing });
-
-        attendanceForm.setData({
-            payroll_period_id: currentPeriod.id,
-            employee_id: employee.id,
-            date: dateObj.date,
-            status: existing ? existing.status : 'present',
-            work_hours: existing ? existing.work_hours : 8,
-            overtime_hours: existing ? existing.overtime_hours : 0,
-            note: existing ? existing.note || '' : '',
-        });
-
-        setAttendanceModalOpen(true);
-    };
-
-    const applyCellPreset = (status, work, ot) => {
-        attendanceForm.setData((prev) => ({
+    const setRowValue = (empId, field, value) => {
+        dirtyRef.current[empId] = true;
+        setRows((prev) => ({
             ...prev,
-            status,
-            work_hours: work,
-            overtime_hours: ot,
+            [empId]: {
+                ...prev[empId],
+                [field]: value,
+            },
         }));
     };
 
-    const handleSaveAttendance = (e) => {
+    // Save one row: attendance + regular & holiday overtime.
+    const handleSaveRow = (e, emp) => {
         e.preventDefault();
-        attendanceForm.post(route('payroll-security.attendance.update'), {
-            preserveScroll: true,
-            onSuccess: () => setAttendanceModalOpen(false),
-        });
+        const isPeriodModifiable = Boolean(
+            currentPeriod?.is_modifiable ?? (
+                currentPeriod?.status === 'draft' || currentPeriod?.status === 'changes_requested'
+            )
+        );
+        if (!canManage || !isPeriodModifiable) return;
+
+        const row = rows[emp.id] || {};
+        setSavingId(emp.id);
+
+        router.post(
+            route('payroll-security.summary.update'),
+            {
+                payroll_period_id: currentPeriod.id,
+                employee_id: emp.id,
+                present_days: row.present_days === '' ? 0 : Number(row.present_days),
+                off_days: Number(row.off_days || 0),
+                sick_days: Number(row.sick_days || 0),
+                permission_days: Number(row.permission_days || 0),
+                leave_days: Number(row.leave_days || 0),
+                absent_days: Number(row.absent_days || 0),
+                regular_overtime_days: Number(row.regular_overtime_days || 0),
+                regular_overtime_hours: Number(row.regular_overtime_hours || 0),
+                off_holiday_overtime_days: Number(row.off_holiday_overtime_days || 0),
+                off_holiday_overtime_hours: Number(row.off_holiday_overtime_hours || 0),
+            },
+            {
+                preserveScroll: true,
+                onSuccess: () => {
+                    dirtyRef.current[emp.id] = false;
+                    setSavingId(null);
+                },
+                onError: () => setSavingId(null),
+            }
+        );
     };
 
-    // Open summary override editor
-    const openSummaryEditor = (employee) => {
-        if (!canManage || !currentPeriod?.is_modifiable) return;
+    // Bulk save all security rows in one transaction
+    const handleBulkSave = () => {
+        const isPeriodModifiable = Boolean(
+            currentPeriod?.is_modifiable ?? (
+                currentPeriod?.status === 'draft' || currentPeriod?.status === 'changes_requested'
+            )
+        );
+        if (!canManage || !isPeriodModifiable || bulkSaving) return;
 
-        const summary = summaries[employee.id];
-        setSelectedSummaryEmployee(employee);
-
-        summaryForm.setData({
-            payroll_period_id: currentPeriod.id,
-            employee_id: employee.id,
-            gross_overtime_hours: summary ? summary.gross_overtime_hours : '',
-            break_deduction_hours: summary ? summary.break_deduction_hours : '',
+        const items = securityEmployees.map((emp) => {
+            const row = rows[emp.id] || {};
+            return {
+                employee_id: emp.id,
+                present_days: row.present_days === '' ? 0 : Number(row.present_days),
+                off_days: Number(row.off_days || 0),
+                sick_days: Number(row.sick_days || 0),
+                permission_days: Number(row.permission_days || 0),
+                leave_days: Number(row.leave_days || 0),
+                absent_days: Number(row.absent_days || 0),
+                regular_overtime_days: Number(row.regular_overtime_days || 0),
+                regular_overtime_hours: Number(row.regular_overtime_hours || 0),
+                off_holiday_overtime_days: Number(row.off_holiday_overtime_days || 0),
+                off_holiday_overtime_hours: Number(row.off_holiday_overtime_hours || 0),
+            };
         });
 
-        setSummaryModalOpen(true);
-    };
-
-    const handleSaveSummary = (e) => {
-        e.preventDefault();
-        summaryForm.post(route('payroll-security.summary.update'), {
-            preserveScroll: true,
-            onSuccess: () => setSummaryModalOpen(false),
-        });
+        setBulkSaving(true);
+        router.post(
+            route('payroll-security.bulk-update'),
+            {
+                payroll_period_id: currentPeriod.id,
+                items,
+            },
+            {
+                preserveScroll: true,
+                onSuccess: () => {
+                    dirtyRef.current = {};
+                    setBulkSaving(false);
+                },
+                onError: () => setBulkSaving(false),
+            }
+        );
     };
 
     // Save formula config
@@ -205,7 +251,7 @@ export default function SecurityPayrollIndex({
         }
     };
 
-    // Preview calculation with live inputs for Config Modal
+    // Live preview calculations for formula config modal
     const previewGross = 40;
     const previewDeduction = Number(configForm.data.break_deduction_default || 5);
     const previewNet = Math.max(0, previewGross - previewDeduction);
@@ -219,13 +265,21 @@ export default function SecurityPayrollIndex({
     const previewSubsequentCost = Math.round(previewSubsequent * previewRate * previewMultSubsequent);
     const previewTotalCost = previewFirstCost + previewSubsequentCost;
 
+    const isPeriodModifiable = Boolean(
+        currentPeriod?.is_modifiable ?? (
+            currentPeriod?.status === 'draft' || currentPeriod?.status === 'changes_requested'
+        )
+    );
+    const canEdit = canManage && isPeriodModifiable;
+    const dirtyCount = Object.keys(dirtyRef.current).filter((k) => dirtyRef.current[k]).length;
+
     return (
         <AuthenticatedLayout
-            title="Perhitungan Payroll Khusus Security"
-            header="Payroll Khusus Security"
+            title="Payroll Security"
+            header="Payroll Security"
             fullWidth={true}
         >
-            <Head title="Payroll Khusus Security" />
+            <Head title="Payroll Security" />
 
             <div className="space-y-6">
                 {/* Header Action Bar */}
@@ -237,19 +291,39 @@ export default function SecurityPayrollIndex({
                         <div>
                             <div className="flex items-center gap-2">
                                 <h1 className="text-xl font-bold text-slate-900 tracking-tight">
-                                    Payroll Khusus Security
+                                    Payroll Security
                                 </h1>
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
-                                    Formula Khusus
+                                    Input Sederhana & Otomatis
                                 </span>
                             </div>
                             <p className="text-xs text-slate-500 mt-0.5">
-                                Matriks rekap absensi harian dan perhitungan lembur berjenjang petugas keamanan.
+                                Input rekap kehadiran dan lembur karyawan Security. Jam aktual kehadiran dihitung otomatis (8 jam/hari).
                             </p>
                         </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
+                        {currentPeriod && (
+                            <Link
+                                href={route('payroll-periods.show', currentPeriod.id)}
+                                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 transition"
+                            >
+                                <Receipt className="w-4 h-4 text-slate-500" />
+                                Periode & Slip Gaji
+                            </Link>
+                        )}
+
+                        {currentPeriod && (
+                            <Link
+                                href={route('payroll-security.reports.index', { period_id: currentPeriod.id })}
+                                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-xs font-semibold text-indigo-700 shadow-xs transition"
+                            >
+                                <BarChart3 className="w-4 h-4 text-indigo-600" />
+                                Laporan & Rekonsiliasi
+                            </Link>
+                        )}
+
                         {currentPeriod && (
                             <a
                                 href={route('payroll-security.periods.export-excel', currentPeriod.id)}
@@ -271,15 +345,36 @@ export default function SecurityPayrollIndex({
                             </button>
                         )}
 
-                        {canManage && currentPeriod?.is_modifiable && (
-                            <button
-                                type="button"
-                                onClick={handleSyncPayslips}
-                                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0B57D0] hover:bg-[#0A58CA] text-xs font-semibold text-white shadow-xs transition"
-                            >
-                                <RefreshCw className="w-4 h-4" />
-                                Sync ke Slip Gaji
-                            </button>
+                        {canEdit && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={handleSyncPayslips}
+                                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-xs font-semibold text-blue-700 shadow-xs transition"
+                                >
+                                    <RefreshCw className="w-4 h-4" />
+                                    Sync ke Slip Gaji
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={handleBulkSave}
+                                    disabled={bulkSaving || securityEmployees.length === 0}
+                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0B57D0] hover:bg-[#0A58CA] text-xs font-semibold text-white shadow-xs transition disabled:opacity-50"
+                                >
+                                    {bulkSaving ? (
+                                        <RefreshCw className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                        <Save className="w-4 h-4" />
+                                    )}
+                                    <span>Simpan Semua Data</span>
+                                    {dirtyCount > 0 && (
+                                        <span className="ml-1 px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
+                                            {dirtyCount} diubah
+                                        </span>
+                                    )}
+                                </button>
+                            </>
                         )}
                     </div>
                 </div>
@@ -334,27 +429,40 @@ export default function SecurityPayrollIndex({
                                         ? 'bg-purple-100 text-purple-800'
                                         : currentPeriod?.status === 'approved'
                                         ? 'bg-emerald-100 text-emerald-800'
-                                        : 'bg-blue-50 text-blue-700'
+                                        : currentPeriod?.status === 'changes_requested'
+                                        ? 'bg-rose-100 text-rose-800'
+                                        : currentPeriod?.status === 'in_review'
+                                        ? 'bg-amber-100 text-amber-800'
+                                        : 'bg-blue-100 text-blue-800'
                                 }`}>
                                     <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
-                                    {currentPeriod?.status_label || 'Draft'}
+                                    {currentPeriod?.status_label || currentPeriod?.status || 'Draft'}
                                 </span>
                             </div>
 
                             <div>
                                 <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider">
-                                    Total Security
+                                    Hari Kalender Periode
                                 </span>
-                                <span className="text-base font-bold text-gray-900">
-                                    {totalEmployees} orang
+                                <span className="text-base font-bold text-gray-900 font-mono">
+                                    {periodDays} Hari
                                 </span>
                             </div>
 
                             <div>
                                 <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider">
-                                    Total Biaya Lembur
+                                    Total Petugas
                                 </span>
-                                <span className="text-base font-bold text-emerald-700 font-mono">
+                                <span className="text-base font-bold text-gray-900 font-mono">
+                                    {totalEmployees} Orang
+                                </span>
+                            </div>
+
+                            <div>
+                                <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider">
+                                    Total Lembur Seluruh Security
+                                </span>
+                                <span className="text-base font-extrabold text-amber-600 font-mono">
                                     {formatRupiah(totalOvertimeAllSecurity)}
                                 </span>
                             </div>
@@ -362,124 +470,118 @@ export default function SecurityPayrollIndex({
                     </div>
                 </div>
 
-                {/* Legend Guide for Daily Attendance Cells */}
-                <div className="flex flex-wrap items-center justify-between text-xs bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-gray-600">
-                    <div className="flex flex-wrap items-center gap-4">
-                        <span className="font-semibold text-gray-700 flex items-center gap-1.5">
-                            <Info className="w-3.5 h-3.5 text-blue-600" />
-                            Petunjuk Nilai Harian:
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                            <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold font-mono text-[11px]">8</span>
-                            <span>Hadir 8 Jam</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                            <span className="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-bold font-mono text-[11px]">16</span>
-                            <span>Double Shift (8h Reguler + 8h Lembur)</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                            <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold text-[11px]">OFF</span>
-                            <span>Libur Jadwal (Bukan Absen)</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                            <span className="inline-block px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 font-bold text-[11px]">A</span>
-                            <span>Tidak Hadir / Absen</span>
+                {/* Validation Errors Notice */}
+                {Object.keys(errors || {}).length > 0 && (
+                    <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-3 text-xs flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <div>
+                            <p className="font-semibold">Terdapat kesalahan pada input rekap:</p>
+                            <ul className="list-disc list-inside mt-1 space-y-0.5">
+                                {Object.values(errors).slice(0, 3).map((err, idx) => (
+                                    <li key={idx}>{err}</li>
+                                ))}
+                            </ul>
                         </div>
                     </div>
-                    {canManage && currentPeriod?.is_modifiable && (
-                        <span className="text-slate-500 italic mt-1 sm:mt-0">
-                            * Klik cell tanggal untuk mengubah absensi harian
-                        </span>
-                    )}
-                </div>
+                )}
 
-                {/* Main Dynamic Matrix Table */}
-                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto max-w-full">
-                        <table className="w-full text-left text-xs text-gray-600 border-collapse">
-                            {/* Table Header */}
-                            <thead className="bg-slate-100 border-b border-gray-200 text-gray-700 select-none">
-                                <tr>
-                                    {/* Sticky Left Columns */}
-                                    <th className="sticky left-0 z-20 bg-slate-100 px-3 py-3 font-bold text-center border-r border-gray-200 w-10">
-                                        No.
+                {/* Main Table: Mass Input Table */}
+                <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs overflow-hidden">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-xs text-left border-collapse">
+                            {/* Visual Grouped Headers */}
+                            <thead>
+                                <tr className="border-b border-gray-300 text-slate-800 text-[11px] uppercase tracking-wider font-extrabold text-center select-none">
+                                    <th colSpan={2} className="px-3 py-2 bg-slate-200/80 border-r border-gray-300 text-slate-700">
+                                        Identitas Karyawan
                                     </th>
-                                    <th className="sticky left-10 z-20 bg-slate-100 px-4 py-3 font-bold border-r border-gray-200 min-w-[170px] shadow-sm">
-                                        Nama Security
+                                    <th colSpan={7} className="px-3 py-2 bg-blue-100/80 border-r border-blue-300 text-blue-900">
+                                        Kehadiran & Ketidakhadiran (Shift Standar 8 Jam)
                                     </th>
+                                    <th colSpan={2} className="px-3 py-2 bg-amber-100/80 border-r border-amber-300 text-amber-900">
+                                        Lembur Hari Kerja Biasa
+                                    </th>
+                                    <th colSpan={2} className="px-3 py-2 bg-purple-100/80 border-r border-purple-300 text-purple-900">
+                                        Lembur Hari OFF / Libur
+                                    </th>
+                                    <th colSpan={5} className="px-3 py-2 bg-emerald-100/70 text-emerald-950">
+                                        Hasil Kalkulasi & Aksi
+                                    </th>
+                                </tr>
+                                <tr className="bg-slate-100 border-b border-gray-300 text-gray-700 text-[11px] font-bold select-none text-center">
+                                    {/* Identitas */}
+                                    <th className="px-2 py-2.5 border-r border-gray-200 w-8">No</th>
+                                    <th className="px-3 py-2.5 text-left border-r border-gray-300 min-w-[150px]">Nama Security</th>
 
-                                    {/* Dynamic Date Columns */}
-                                    {periodDates.map((d) => (
-                                        <th
-                                            key={d.date}
-                                            className={`px-2 py-2 text-center border-r border-gray-200 min-w-[42px] ${
-                                                d.is_sunday ? 'bg-rose-50/80 text-rose-700' : ''
-                                            }`}
-                                            title={d.full_date}
-                                        >
-                                            <div className="text-[10px] font-semibold uppercase">{d.day_name}</div>
-                                            <div className="text-[11px] font-mono font-bold">{d.formatted_date}</div>
-                                        </th>
-                                    ))}
+                                    {/* Kehadiran */}
+                                    <th className="px-1.5 py-2.5 border-r border-gray-200 bg-blue-50 text-blue-950 w-16" title="Hari Masuk Kerja">Masuk</th>
+                                    <th className="px-1.5 py-2.5 border-r border-gray-200 bg-blue-50 text-blue-950 w-14" title="Hari OFF Rutin">OFF</th>
+                                    <th className="px-1.5 py-2.5 border-r border-gray-200 bg-blue-50/70 text-blue-950 w-14" title="Hari Sakit">Sakit</th>
+                                    <th className="px-1.5 py-2.5 border-r border-gray-200 bg-blue-50/70 text-blue-950 w-14" title="Hari Izin">Izin</th>
+                                    <th className="px-1.5 py-2.5 border-r border-gray-200 bg-blue-50/70 text-blue-950 w-14" title="Hari Cuti">Cuti</th>
+                                    <th className="px-1.5 py-2.5 border-r border-gray-200 bg-blue-50/70 text-blue-950 w-14" title="Hari Alfa">Alfa</th>
+                                    <th className="px-2 py-2.5 border-r border-blue-300 bg-blue-100 text-blue-950 min-w-[75px]" title="Jam Aktual = Masuk * 8 Jam">Jam Hadir</th>
 
-                                    {/* Summary Columns */}
-                                    <th className="px-3 py-3 text-center border-r border-gray-200 bg-slate-200/80 font-bold min-w-[70px]" title="Jumlah Hari dalam Periode">
-                                        Hari
-                                    </th>
-                                    <th className="px-3 py-3 text-center border-r border-gray-200 bg-slate-200/80 font-bold min-w-[75px]" title="Total Jam Kerja">
-                                        Jam Kerja
-                                    </th>
-                                    <th className="px-3 py-3 text-center border-r border-gray-200 bg-indigo-50 text-indigo-900 font-bold min-w-[65px]" title="Hari OFF (Jadwal Libur)">
-                                        OFF
-                                    </th>
-                                    <th className="px-3 py-3 text-center border-r border-gray-200 bg-rose-50 text-rose-900 font-bold min-w-[65px]" title="Ketidakhadiran (Absen)">
-                                        Absen
-                                    </th>
-                                    <th className="px-3 py-3 text-center border-r border-gray-200 bg-amber-50 text-amber-900 font-bold min-w-[80px]" title="Total Jam Lembur Awal">
-                                        Lembur
-                                    </th>
-                                    <th className="px-3 py-3 text-center border-r border-gray-200 bg-slate-100 font-bold min-w-[75px]" title="Potongan Jam Istirahat">
-                                        Pot. Ist.
-                                    </th>
-                                    <th className="px-3 py-3 text-center border-r border-gray-200 bg-amber-100/70 text-amber-900 font-bold min-w-[85px]" title="Jam Lembur Bersih (Lembur - Potongan)">
-                                        Lembur Bersih
-                                    </th>
-                                    <th className="px-3 py-3 text-right border-r border-gray-200 bg-slate-50 font-bold min-w-[90px]" title="Upah per Jam">
-                                        Upah/Jam
-                                    </th>
-                                    <th className="px-3 py-3 text-center border-r border-gray-200 bg-blue-50 text-blue-900 font-bold min-w-[80px]" title="Jam Pertama">
-                                        Jam 1
-                                    </th>
-                                    <th className="px-3 py-3 text-right border-r border-gray-200 bg-blue-50 text-blue-900 font-bold min-w-[105px]" title="Biaya Jam Pertama">
-                                        Biaya Jam 1
-                                    </th>
-                                    <th className="px-3 py-3 text-center border-r border-gray-200 bg-indigo-50 text-indigo-900 font-bold min-w-[80px]" title="Jam Berikutnya">
-                                        Jam Lanjut
-                                    </th>
-                                    <th className="px-3 py-3 text-right border-r border-gray-200 bg-indigo-50 text-indigo-900 font-bold min-w-[110px]" title="Biaya Jam Berikutnya">
-                                        Biaya Jam Lanjut
-                                    </th>
-                                    <th className="px-3 py-3 text-right border-r border-gray-200 bg-amber-200/60 text-amber-950 font-bold min-w-[125px]" title="Total Biaya Lembur Security">
-                                        Total Lembur
-                                    </th>
-                                    <th className="px-3 py-3 text-right bg-emerald-100/70 text-emerald-950 font-bold min-w-[130px]" title="Total Upah Periode (Pokok + Tunjangan + Lembur)">
-                                        Total Upah
-                                    </th>
+                                    {/* Lembur Hari Biasa */}
+                                    <th className="px-1.5 py-2.5 border-r border-gray-200 bg-amber-50 text-amber-950 w-14" title="Jumlah Hari Lembur Biasa">Hari</th>
+                                    <th className="px-1.5 py-2.5 border-r border-amber-300 bg-amber-50 text-amber-950 w-16" title="Total Jam Lembur Biasa">Jam</th>
+
+                                    {/* Lembur OFF/Libur */}
+                                    <th className="px-1.5 py-2.5 border-r border-gray-200 bg-purple-50 text-purple-950 w-14" title="Jumlah Hari Lembur OFF/Libur">Hari</th>
+                                    <th className="px-1.5 py-2.5 border-r border-purple-300 bg-purple-50 text-purple-950 w-16" title="Total Jam Lembur OFF/Libur">Jam</th>
+
+                                    {/* Ringkasan */}
+                                    <th className="px-2 py-2.5 border-r border-gray-200 bg-emerald-50 text-emerald-950 min-w-[70px]" title="Jam Lembur Bersih">Bersih</th>
+                                    <th className="px-2.5 py-2.5 text-right border-r border-gray-200 bg-emerald-50 text-emerald-950 min-w-[95px]" title="Total Biaya Lembur">Total Lembur</th>
+                                    <th className="px-2.5 py-2.5 text-right border-r border-gray-200 bg-emerald-50 text-emerald-950 min-w-[105px]" title="Total Gaji Periode">Total Upah</th>
+                                    <th className="px-2 py-2.5 border-r border-gray-200 bg-slate-100 min-w-[85px]">Status</th>
+                                    <th className="px-2 py-2.5 bg-slate-100 min-w-[70px]">Aksi</th>
                                 </tr>
                             </thead>
 
                             {/* Table Body */}
-                            <tbody className="divide-y divide-gray-200">
+                            <tbody className="divide-y divide-gray-200 font-mono text-xs">
                                 {securityEmployees.length > 0 ? (
                                     securityEmployees.map((emp, index) => {
                                         const summary = summaries[emp.id] || {};
+                                        const row = rows[emp.id] || {
+                                            present_days: summary.present_days ?? summary.total_work_days ?? currentPeriod?.working_days ?? '',
+                                            off_days: summary.off_days ?? summary.total_off_days ?? 0,
+                                            sick_days: summary.sick_days ?? 0,
+                                            permission_days: summary.permission_days ?? 0,
+                                            leave_days: summary.leave_days ?? 0,
+                                            absent_days: summary.absent_days ?? summary.total_absent_days ?? 0,
+                                            regular_overtime_days: summary.regular_overtime_days ?? 0,
+                                            regular_overtime_hours: summary.regular_overtime_hours ?? summary.gross_overtime_hours ?? 0,
+                                            off_holiday_overtime_days: summary.off_holiday_overtime_days ?? 0,
+                                            off_holiday_overtime_hours: summary.off_holiday_overtime_hours ?? 0,
+                                        };
+
+                                        // Real-time live calculations for this row
+                                        const presentDaysNum = row.present_days === '' ? 0 : Number(row.present_days);
+                                        const offDaysNum = Number(row.off_days || 0);
+                                        const sickDaysNum = Number(row.sick_days || 0);
+                                        const permissionDaysNum = Number(row.permission_days || 0);
+                                        const leaveDaysNum = Number(row.leave_days || 0);
+                                        const absentDaysNum = Number(row.absent_days || 0);
+
+                                        const liveAttendanceHours = presentDaysNum * 8;
+                                        const totalRecordedDays = presentDaysNum + offDaysNum + sickDaysNum + permissionDaysNum + leaveDaysNum + absentDaysNum;
+                                        const isOverDays = totalRecordedDays > periodDays;
+                                        const isComplete = totalRecordedDays === periodDays;
+
+                                        const isSaving = savingId === emp.id;
+                                        const isDirty = dirtyRef.current[emp.id];
+
                                         return (
-                                            <tr key={emp.id} className="hover:bg-slate-50/70 transition-colors">
-                                                {/* Sticky No & Name */}
-                                                <td className="sticky left-0 z-10 bg-white px-3 py-2.5 text-center font-mono border-r border-gray-200">
+                                            <tr key={emp.id} className={`hover:bg-slate-50/80 transition-colors ${isOverDays ? 'bg-rose-50/40' : ''}`}>
+                                                {/* No */}
+                                                <td className="px-2 py-2 text-center text-gray-500 border-r border-gray-200">
                                                     {index + 1}
                                                 </td>
-                                                <td className="sticky left-10 z-10 bg-white px-4 py-2.5 border-r border-gray-200 shadow-sm">
+
+                                                {/* Nama & NIK */}
+                                                <td className="px-3 py-2 border-r border-gray-300 font-sans">
                                                     <div className="font-semibold text-gray-900 truncate">
                                                         {emp.full_name}
                                                     </div>
@@ -488,107 +590,251 @@ export default function SecurityPayrollIndex({
                                                     </div>
                                                 </td>
 
-                                                {/* Dynamic Daily Attendance Cells */}
-                                                {periodDates.map((d) => {
-                                                    const key = `${emp.id}_${d.date}`;
-                                                    const att = attendances[key];
-                                                    const status = att ? att.status : 'present';
-                                                    const work = att ? Number(att.work_hours) : 8;
-                                                    const ot = att ? Number(att.overtime_hours) : 0;
+                                                {/* Hari Masuk (present_days) */}
+                                                <td className="p-1 text-center border-r border-gray-200 bg-blue-50/30">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max={periodDays}
+                                                        step="1"
+                                                        disabled={!canEdit}
+                                                        value={row.present_days}
+                                                        onChange={(e) => setRowValue(emp.id, 'present_days', e.target.value)}
+                                                        className="w-14 text-center text-xs font-mono font-bold text-blue-900 rounded-lg border-gray-300 shadow-2xs focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 disabled:bg-gray-50 disabled:text-gray-400 py-1"
+                                                        title="Jumlah hari masuk shift standar 8 jam"
+                                                    />
+                                                </td>
 
-                                                    let badgeClass = 'text-gray-700 bg-slate-50';
-                                                    let displayVal = work;
+                                                {/* Hari OFF (off_days) */}
+                                                <td className="p-1 text-center border-r border-gray-200 bg-blue-50/30">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max={periodDays}
+                                                        step="1"
+                                                        disabled={!canEdit}
+                                                        value={row.off_days}
+                                                        onChange={(e) => setRowValue(emp.id, 'off_days', e.target.value)}
+                                                        className="w-12 text-center text-xs font-mono text-gray-700 rounded-lg border-gray-300 shadow-2xs focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 disabled:bg-gray-50 py-1"
+                                                        title="Hari OFF"
+                                                    />
+                                                </td>
 
-                                                    if (status === 'off') {
-                                                        badgeClass = 'bg-indigo-100 text-indigo-700 font-bold';
-                                                        displayVal = 'OFF';
-                                                    } else if (status === 'absent') {
-                                                        badgeClass = 'bg-rose-100 text-rose-700 font-bold';
-                                                        displayVal = 'A';
-                                                    } else if (work === 8 && ot === 8) {
-                                                        badgeClass = 'bg-amber-100 text-amber-900 font-bold';
-                                                        displayVal = '16';
-                                                    } else if (ot > 0) {
-                                                        badgeClass = 'bg-amber-50 text-amber-800 font-medium';
-                                                        displayVal = `${work + ot}`;
-                                                    }
+                                                {/* Hari Sakit (sick_days) */}
+                                                <td className="p-1 text-center border-r border-gray-200 bg-blue-50/20">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max={periodDays}
+                                                        step="1"
+                                                        disabled={!canEdit}
+                                                        value={row.sick_days}
+                                                        onChange={(e) => setRowValue(emp.id, 'sick_days', e.target.value)}
+                                                        className="w-12 text-center text-xs font-mono text-gray-700 rounded-lg border-gray-300 shadow-2xs focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 disabled:bg-gray-50 py-1"
+                                                        title="Hari Sakit"
+                                                    />
+                                                </td>
 
-                                                    return (
-                                                        <td
-                                                            key={d.date}
-                                                            onClick={() => openCellEditor(emp, d)}
-                                                            className={`px-1 py-1 text-center border-r border-gray-200 cursor-pointer select-none transition ${
-                                                                d.is_sunday ? 'bg-rose-50/30' : ''
-                                                            } ${canManage && currentPeriod?.is_modifiable ? 'hover:bg-blue-100/50' : ''}`}
-                                                            title={`${emp.full_name} (${d.full_date}): ${status === 'off' ? 'OFF' : status === 'absent' ? 'Absen' : `Kerja ${work}h, Lembur ${ot}h`}`}
-                                                        >
-                                                            <div className={`py-1 px-1 rounded text-[11px] font-mono ${badgeClass}`}>
-                                                                {displayVal}
-                                                            </div>
-                                                        </td>
-                                                    );
-                                                })}
+                                                {/* Hari Izin (permission_days) */}
+                                                <td className="p-1 text-center border-r border-gray-200 bg-blue-50/20">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max={periodDays}
+                                                        step="1"
+                                                        disabled={!canEdit}
+                                                        value={row.permission_days}
+                                                        onChange={(e) => setRowValue(emp.id, 'permission_days', e.target.value)}
+                                                        className="w-12 text-center text-xs font-mono text-gray-700 rounded-lg border-gray-300 shadow-2xs focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 disabled:bg-gray-50 py-1"
+                                                        title="Hari Izin"
+                                                    />
+                                                </td>
 
-                                                {/* Summary Columns */}
-                                                <td className="px-3 py-2.5 text-center font-mono border-r border-gray-200 bg-slate-50">
-                                                    {summary.total_days || periodDates.length}
+                                                {/* Hari Cuti (leave_days) */}
+                                                <td className="p-1 text-center border-r border-gray-200 bg-blue-50/20">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max={periodDays}
+                                                        step="1"
+                                                        disabled={!canEdit}
+                                                        value={row.leave_days}
+                                                        onChange={(e) => setRowValue(emp.id, 'leave_days', e.target.value)}
+                                                        className="w-12 text-center text-xs font-mono text-gray-700 rounded-lg border-gray-300 shadow-2xs focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 disabled:bg-gray-50 py-1"
+                                                        title="Hari Cuti"
+                                                    />
                                                 </td>
-                                                <td className="px-3 py-2.5 text-center font-mono border-r border-gray-200 bg-slate-50">
-                                                    {formatNumber(summary.total_work_hours)}
+
+                                                {/* Hari Alfa (absent_days) */}
+                                                <td className="p-1 text-center border-r border-gray-200 bg-blue-50/20">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max={periodDays}
+                                                        step="1"
+                                                        disabled={!canEdit}
+                                                        value={row.absent_days}
+                                                        onChange={(e) => setRowValue(emp.id, 'absent_days', e.target.value)}
+                                                        className="w-12 text-center text-xs font-mono text-rose-700 rounded-lg border-gray-300 shadow-2xs focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 disabled:bg-gray-50 py-1"
+                                                        title="Hari Alfa / Tanpa Keterangan"
+                                                    />
                                                 </td>
-                                                <td className="px-3 py-2.5 text-center font-mono font-bold text-indigo-700 border-r border-gray-200 bg-indigo-50/50">
-                                                    {summary.total_off_days || 0}
+
+                                                {/* Jam Masuk Aktual (present_days * 8) */}
+                                                <td className="px-1.5 py-1 text-center border-r border-blue-300 bg-blue-100/60 font-bold text-blue-900" title="Jam Aktual = Hari Masuk * 8 Jam">
+                                                    <div>{liveAttendanceHours}j</div>
+                                                    <div className="text-[10px] text-blue-700/80 font-normal">
+                                                        Tgt: {summary.target_hours ? `${summary.target_hours}j` : `${liveAttendanceHours}j`}
+                                                    </div>
+                                                    {Number(summary.total_shortage_hours || 0) > 0 && (
+                                                        <span className="inline-block px-1 py-0.2 rounded bg-rose-100 text-rose-800 text-[9px] font-bold mt-0.5" title={`Total kekurangan jam: ${summary.total_shortage_hours} jam`}>
+                                                            -{summary.total_shortage_hours}j
+                                                        </span>
+                                                    )}
                                                 </td>
-                                                <td className="px-3 py-2.5 text-center font-mono font-bold text-rose-700 border-r border-gray-200 bg-rose-50/50">
-                                                    {summary.total_absent_days || 0}
+
+                                                {/* Lembur Biasa - Hari (regular_overtime_days) */}
+                                                <td className="p-1 text-center border-r border-gray-200 bg-amber-50/30">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max={periodDays}
+                                                        step="1"
+                                                        disabled={!canEdit}
+                                                        value={row.regular_overtime_days}
+                                                        onChange={(e) => setRowValue(emp.id, 'regular_overtime_days', e.target.value)}
+                                                        className="w-12 text-center text-xs font-mono text-amber-900 font-bold rounded-lg border-gray-300 shadow-2xs focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 disabled:bg-gray-50 py-1"
+                                                        title="Jumlah hari lembur hari biasa"
+                                                    />
                                                 </td>
-                                                <td
-                                                    onClick={() => openSummaryEditor(emp)}
-                                                    className={`px-3 py-2.5 text-center font-mono font-bold text-amber-800 border-r border-gray-200 bg-amber-50/50 ${canManage && currentPeriod?.is_modifiable ? 'cursor-pointer hover:bg-amber-100' : ''}`}
-                                                    title="Klik untuk ubah lembur awal"
-                                                >
-                                                    {formatNumber(summary.gross_overtime_hours)}
+
+                                                {/* Lembur Biasa - Jam (regular_overtime_hours) */}
+                                                <td className="p-1 text-center border-r border-amber-300 bg-amber-50/30">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.5"
+                                                        disabled={!canEdit}
+                                                        value={row.regular_overtime_hours}
+                                                        onChange={(e) => setRowValue(emp.id, 'regular_overtime_hours', e.target.value)}
+                                                        className="w-14 text-center text-xs font-mono text-amber-950 font-bold rounded-lg border-gray-300 shadow-2xs focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 disabled:bg-gray-50 py-1"
+                                                        title="Total jam lembur hari biasa"
+                                                    />
                                                 </td>
-                                                <td
-                                                    onClick={() => openSummaryEditor(emp)}
-                                                    className={`px-3 py-2.5 text-center font-mono text-gray-700 border-r border-gray-200 ${canManage && currentPeriod?.is_modifiable ? 'cursor-pointer hover:bg-slate-100' : ''}`}
-                                                    title="Klik untuk ubah potongan istirahat"
-                                                >
-                                                    {formatNumber(summary.break_deduction_hours)}
+
+                                                {/* Lembur OFF/Libur - Hari (off_holiday_overtime_days) */}
+                                                <td className="p-1 text-center border-r border-gray-200 bg-purple-50/30">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max={periodDays}
+                                                        step="1"
+                                                        disabled={!canEdit}
+                                                        value={row.off_holiday_overtime_days}
+                                                        onChange={(e) => setRowValue(emp.id, 'off_holiday_overtime_days', e.target.value)}
+                                                        className="w-12 text-center text-xs font-mono text-purple-900 font-bold rounded-lg border-gray-300 shadow-2xs focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 disabled:bg-gray-50 py-1"
+                                                        title="Jumlah hari lembur hari OFF/Libur"
+                                                    />
                                                 </td>
-                                                <td className="px-3 py-2.5 text-center font-mono font-bold text-amber-900 border-r border-gray-200 bg-amber-100/40">
-                                                    {formatNumber(summary.net_overtime_hours)}
+
+                                                {/* Lembur OFF/Libur - Jam (off_holiday_overtime_hours) */}
+                                                <td className="p-1 text-center border-r border-purple-300 bg-purple-50/30">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.5"
+                                                        disabled={!canEdit}
+                                                        value={row.off_holiday_overtime_hours}
+                                                        onChange={(e) => setRowValue(emp.id, 'off_holiday_overtime_hours', e.target.value)}
+                                                        className="w-14 text-center text-xs font-mono text-purple-950 font-bold rounded-lg border-gray-300 shadow-2xs focus:border-[#0B57D0] focus:ring-[#0B57D0]/20 disabled:bg-gray-50 py-1"
+                                                        title="Total jam lembur hari OFF/Libur"
+                                                    />
                                                 </td>
-                                                <td className="px-3 py-2.5 text-right font-mono border-r border-gray-200 bg-slate-50">
-                                                    {formatNumber(summary.hourly_rate)}
+
+                                                {/* Hasil: Lembur Bersih */}
+                                                <td className="px-2 py-2 text-center border-r border-gray-200 bg-emerald-50/50 text-emerald-950 font-bold">
+                                                    {formatNumber(summary.net_overtime_hours)}j
                                                 </td>
-                                                <td className="px-3 py-2.5 text-center font-mono border-r border-gray-200 bg-blue-50/40 text-blue-900">
-                                                    {formatNumber(summary.first_hours)}
-                                                </td>
-                                                <td className="px-3 py-2.5 text-right font-mono border-r border-gray-200 bg-blue-50/40 text-blue-900">
-                                                    {formatNumber(summary.first_hours_cost)}
-                                                </td>
-                                                <td className="px-3 py-2.5 text-center font-mono border-r border-gray-200 bg-indigo-50/40 text-indigo-900">
-                                                    {formatNumber(summary.subsequent_hours)}
-                                                </td>
-                                                <td className="px-3 py-2.5 text-right font-mono border-r border-gray-200 bg-indigo-50/40 text-indigo-900">
-                                                    {formatNumber(summary.subsequent_hours_cost)}
-                                                </td>
-                                                <td className="px-3 py-2.5 text-right font-mono font-bold border-r border-gray-200 bg-amber-100/70 text-amber-950">
+
+                                                {/* Hasil: Total Biaya Lembur */}
+                                                <td className="px-2.5 py-2 text-right border-r border-gray-200 bg-emerald-50/60 font-bold text-amber-900">
                                                     {formatRupiah(summary.total_overtime_cost)}
                                                 </td>
-                                                <td className="px-3 py-2.5 text-right font-mono font-bold bg-emerald-50 text-emerald-950">
+
+                                                {/* Hasil: Total Upah Periode */}
+                                                <td className="px-2.5 py-2 text-right border-r border-gray-200 bg-emerald-100/60 font-bold text-emerald-950">
                                                     {formatRupiah(summary.total_period_salary)}
+                                                </td>
+
+                                                {/* Status Kelengkapan Hari */}
+                                                <td className="px-2 py-2 text-center border-r border-gray-200 font-sans">
+                                                    {isOverDays ? (
+                                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-100 text-rose-800" title={`Melebihi: ${totalRecordedDays} dari ${periodDays} hari`}>
+                                                            <AlertCircle className="w-3 h-3 text-rose-600" />
+                                                            {totalRecordedDays}/{periodDays}
+                                                        </span>
+                                                    ) : isComplete ? (
+                                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+                                                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                                            Lengkap
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">
+                                                            {totalRecordedDays}/{periodDays}h
+                                                        </span>
+                                                    )}
+                                                </td>
+
+                                                {/* Tombol Simpan & Detail Per Baris */}
+                                                <td className="px-2 py-1.5 text-center bg-slate-50 font-sans">
+                                                    <div className="flex items-center justify-center gap-1.5">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setSelectedEmployee(emp);
+                                                                setDetailModalOpen(true);
+                                                            }}
+                                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 shadow-2xs transition"
+                                                            title="Lihat rincian kalkulasi lengkap"
+                                                        >
+                                                            <Eye className="w-3 h-3 text-[#0B57D0]" />
+                                                            <span>Detail</span>
+                                                        </button>
+
+                                                        {canEdit ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => handleSaveRow(e, emp)}
+                                                                disabled={isSaving}
+                                                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-semibold transition ${
+                                                                    isSaving
+                                                                        ? 'bg-slate-200 text-slate-400 cursor-wait'
+                                                                        : isDirty
+                                                                        ? 'bg-[#0B57D0] hover:bg-[#0A58CA] text-white shadow-xs'
+                                                                        : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+                                                                }`}
+                                                                title={isDirty ? 'Ada perubahan belum disimpan' : 'Simpan baris ini'}
+                                                            >
+                                                                {isSaving ? (
+                                                                    <RefreshCw className="w-3 h-3 animate-spin" />
+                                                                ) : (
+                                                                    <Save className="w-3 h-3" />
+                                                                )}
+                                                                {isSaving ? '...' : 'Simpan'}
+                                                            </button>
+                                                        ) : (
+                                                            <span className="text-[10px] text-gray-400 italic">
+                                                                Terkunci
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         );
                                     })
                                 ) : (
                                     <tr>
-                                        <td
-                                            colSpan={periodDates.length + 16}
-                                            className="px-6 py-12 text-center text-gray-500"
-                                        >
+                                        <td colSpan={18} className="px-6 py-12 text-center text-gray-500 font-sans">
                                             <ShieldAlert className="w-8 h-8 text-amber-500 mx-auto mb-2" />
                                             <p className="font-semibold text-gray-700">Belum ada karyawan Security yang ditemukan.</p>
                                             <p className="text-xs text-gray-400 mt-1">
@@ -599,243 +845,51 @@ export default function SecurityPayrollIndex({
                                 )}
                             </tbody>
 
-                            {/* Table Footer: TOTAL LEMBUR SECURITY */}
+                            {/* Table Footer: Totals */}
                             {securityEmployees.length > 0 && (
-                                <tfoot className="border-t-2 border-gray-300 font-bold select-none">
-                                    <tr className="bg-amber-100/90 text-amber-950">
-                                        <td
-                                            colSpan={periodDates.length + 14}
-                                            className="px-4 py-3 text-right uppercase tracking-wider text-xs border-r border-amber-300"
-                                        >
+                                <tfoot className="border-t-2 border-gray-300 font-bold select-none text-xs">
+                                    <tr className="bg-amber-100/90 text-amber-950 font-mono">
+                                        <td colSpan={14} className="px-4 py-2.5 text-right uppercase tracking-wider text-[11px] font-sans border-r border-amber-300">
                                             TOTAL LEMBUR SECURITY ({securityEmployees.length} Petugas)
                                         </td>
-                                        <td className="px-4 py-3 text-right font-mono text-sm font-black border-r border-amber-300 bg-amber-200 text-amber-950">
+                                        <td className="px-3 py-2.5 text-right font-black border-r border-amber-300 bg-amber-200 text-amber-950">
                                             {formatRupiah(totalOvertimeAllSecurity)}
                                         </td>
-                                        <td className="px-4 py-3 text-right font-mono text-sm font-bold bg-emerald-100 text-emerald-950">
+                                        <td className="px-3 py-2.5 text-right font-bold bg-emerald-100 text-emerald-950 border-r border-gray-300">
                                             {formatRupiah(
                                                 Object.values(summaries).reduce((acc, curr) => acc + Number(curr.total_period_salary || 0), 0)
                                             )}
                                         </td>
+                                        <td colSpan={2} className="bg-amber-100/90"></td>
                                     </tr>
                                 </tfoot>
                             )}
                         </table>
                     </div>
                 </div>
+
+                {/* Input Instructions & Rules */}
+                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 text-xs text-slate-700 space-y-2">
+                    <div className="font-bold flex items-center gap-2 text-slate-900">
+                        <Check className="w-4 h-4 text-emerald-600" />
+                        <span>Petunjuk Entri Payroll Security:</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px] text-slate-600">
+                        <div className="bg-white p-3 rounded-xl border border-slate-200">
+                            <span className="font-semibold text-slate-900 block mb-1">1. Kehadiran & Shift</span>
+                            Isi jumlah <strong>Hari Masuk</strong>. Jam aktual kehadiran dihitung otomatis <code>Hari Masuk × 8 jam</code> oleh backend. Lengkapi juga hari OFF, Sakit, Izin, Cuti, dan Alfa.
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-slate-200">
+                            <span className="font-semibold text-slate-900 block mb-1">2. Pemisahan Lembur</span>
+                            Pisahkan antara <strong>Lembur Hari Kerja Biasa</strong> (Hari & Jam) dan <strong>Lembur Hari OFF/Libur</strong> (Hari & Jam). Hari lembur menentukan alokasi jam pertama secara proporsional.
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-slate-200">
+                            <span className="font-semibold text-slate-900 block mb-1">3. Penyimpanan Data</span>
+                            Gunakan tombol <strong>Simpan</strong> pada masing-masing baris atau klik tombol <strong>Simpan Semua Data</strong> di pojok kanan atas untuk menyimpan seluruh baris sekaligus dalam 1 transaksi.
+                        </div>
+                    </div>
+                </div>
             </div>
-
-            {/* Modal: Quick Edit Absensi Harian */}
-            <Modal show={attendanceModalOpen} onClose={() => setAttendanceModalOpen(false)} maxWidth="md">
-                <form onSubmit={handleSaveAttendance} className="p-6">
-                    <div className="flex items-center justify-between pb-3 border-b border-gray-100">
-                        <div className="flex items-center gap-2">
-                            <Clock className="w-5 h-5 text-blue-600" />
-                            <h3 className="font-bold text-gray-900 text-sm">
-                                Edit Absensi: {selectedCell?.employee?.full_name}
-                            </h3>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setAttendanceModalOpen(false)}
-                            className="text-gray-400 hover:text-gray-600"
-                        >
-                            <X className="w-5 h-5" />
-                        </button>
-                    </div>
-
-                    <div className="py-4 space-y-4">
-                        <div className="bg-slate-50 rounded-xl p-3 text-xs flex justify-between items-center">
-                            <div>
-                                <span className="text-gray-500">Tanggal: </span>
-                                <span className="font-bold text-gray-800">{selectedCell?.dateObj?.full_date}</span>
-                            </div>
-                            <div>
-                                <span className="text-gray-500">NIK: </span>
-                                <span className="font-mono font-semibold text-gray-800">{selectedCell?.employee?.employee_number}</span>
-                            </div>
-                        </div>
-
-                        {/* Quick Presets */}
-                        <div>
-                            <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-                                Preset Cepat
-                            </label>
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                                <button
-                                    type="button"
-                                    onClick={() => applyCellPreset('present', 8, 0)}
-                                    className={`py-2 px-3 rounded-xl border text-left font-medium transition ${
-                                        attendanceForm.data.status === 'present' && attendanceForm.data.work_hours == 8 && attendanceForm.data.overtime_hours == 0
-                                            ? 'border-emerald-500 bg-emerald-50 text-emerald-800 font-bold'
-                                            : 'border-gray-200 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    8 Jam (Hadir Normal)
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => applyCellPreset('present', 8, 8)}
-                                    className={`py-2 px-3 rounded-xl border text-left font-medium transition ${
-                                        attendanceForm.data.status === 'present' && attendanceForm.data.work_hours == 8 && attendanceForm.data.overtime_hours == 8
-                                            ? 'border-amber-500 bg-amber-50 text-amber-900 font-bold'
-                                            : 'border-gray-200 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    16 Jam (Double Shift)
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => applyCellPreset('off', 0, 0)}
-                                    className={`py-2 px-3 rounded-xl border text-left font-medium transition ${
-                                        attendanceForm.data.status === 'off'
-                                            ? 'border-indigo-500 bg-indigo-50 text-indigo-800 font-bold'
-                                            : 'border-gray-200 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    OFF (Libur Jadwal)
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => applyCellPreset('absent', 0, 0)}
-                                    className={`py-2 px-3 rounded-xl border text-left font-medium transition ${
-                                        attendanceForm.data.status === 'absent'
-                                            ? 'border-rose-500 bg-rose-50 text-rose-800 font-bold'
-                                            : 'border-gray-200 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    Absen (Tidak Hadir)
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Custom Inputs */}
-                        <div className="grid grid-cols-2 gap-3 pt-2">
-                            <div>
-                                <InputLabel htmlFor="work_hours" value="Jam Kerja *" />
-                                <TextInput
-                                    id="work_hours"
-                                    type="number"
-                                    step="0.5"
-                                    min="0"
-                                    max="24"
-                                    className="mt-1 block w-full text-xs font-mono"
-                                    value={attendanceForm.data.work_hours}
-                                    onChange={(e) => attendanceForm.setData('work_hours', e.target.value)}
-                                    required
-                                />
-                                <InputError message={attendanceForm.errors.work_hours} className="mt-1" />
-                            </div>
-
-                            <div>
-                                <InputLabel htmlFor="overtime_hours" value="Jam Lembur *" />
-                                <TextInput
-                                    id="overtime_hours"
-                                    type="number"
-                                    step="0.5"
-                                    min="0"
-                                    max="24"
-                                    className="mt-1 block w-full text-xs font-mono"
-                                    value={attendanceForm.data.overtime_hours}
-                                    onChange={(e) => attendanceForm.setData('overtime_hours', e.target.value)}
-                                    required
-                                />
-                                <InputError message={attendanceForm.errors.overtime_hours} className="mt-1" />
-                            </div>
-                        </div>
-
-                        <div>
-                            <InputLabel htmlFor="note" value="Catatan Tambahan (Opsional)" />
-                            <TextInput
-                                id="note"
-                                type="text"
-                                className="mt-1 block w-full text-xs"
-                                value={attendanceForm.data.note}
-                                onChange={(e) => attendanceForm.setData('note', e.target.value)}
-                                placeholder="Contoh: Menggantikan shift pagi"
-                            />
-                            <InputError message={attendanceForm.errors.note} className="mt-1" />
-                        </div>
-                    </div>
-
-                    <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-100">
-                        <SecondaryButton type="button" onClick={() => setAttendanceModalOpen(false)}>
-                            Batal
-                        </SecondaryButton>
-                        <PrimaryButton type="submit" disabled={attendanceForm.processing}>
-                            Simpan Absensi
-                        </PrimaryButton>
-                    </div>
-                </form>
-            </Modal>
-
-            {/* Modal: Edit Rekap Lembur & Potongan Istirahat */}
-            <Modal show={summaryModalOpen} onClose={() => setSummaryModalOpen(false)} maxWidth="sm">
-                <form onSubmit={handleSaveSummary} className="p-6">
-                    <div className="flex items-center justify-between pb-3 border-b border-gray-100">
-                        <div className="flex items-center gap-2">
-                            <Edit3 className="w-5 h-5 text-amber-600" />
-                            <h3 className="font-bold text-gray-900 text-sm">
-                                Koreksi Rekap Lembur
-                            </h3>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setSummaryModalOpen(false)}
-                            className="text-gray-400 hover:text-gray-600"
-                        >
-                            <X className="w-5 h-5" />
-                        </button>
-                    </div>
-
-                    <div className="py-4 space-y-4">
-                        <div className="bg-amber-50 rounded-xl p-3 text-xs text-amber-900">
-                            Petugas: <strong>{selectedSummaryEmployee?.full_name}</strong>
-                        </div>
-
-                        <div>
-                            <InputLabel htmlFor="gross_overtime_hours" value="Total Jam Lembur Awal" />
-                            <TextInput
-                                id="gross_overtime_hours"
-                                type="number"
-                                step="0.5"
-                                min="0"
-                                className="mt-1 block w-full text-xs font-mono"
-                                value={summaryForm.data.gross_overtime_hours}
-                                onChange={(e) => summaryForm.setData('gross_overtime_hours', e.target.value)}
-                            />
-                            <p className="text-[11px] text-gray-500 mt-1">
-                                Total jam lembur sebelum potongan istirahat.
-                            </p>
-                        </div>
-
-                        <div>
-                            <InputLabel htmlFor="break_deduction_hours" value="Potongan Jam Istirahat" />
-                            <TextInput
-                                id="break_deduction_hours"
-                                type="number"
-                                step="0.5"
-                                min="0"
-                                className="mt-1 block w-full text-xs font-mono"
-                                value={summaryForm.data.break_deduction_hours}
-                                onChange={(e) => summaryForm.setData('break_deduction_hours', e.target.value)}
-                            />
-                            <p className="text-[11px] text-gray-500 mt-1">
-                                Jumlah jam istirahat yang dipotongkan dari total jam lembur.
-                            </p>
-                        </div>
-                    </div>
-
-                    <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-100">
-                        <SecondaryButton type="button" onClick={() => setSummaryModalOpen(false)}>
-                            Batal
-                        </SecondaryButton>
-                        <PrimaryButton type="submit" disabled={summaryForm.processing}>
-                            Simpan Koreksi
-                        </PrimaryButton>
-                    </div>
-                </form>
-            </Modal>
 
             {/* Modal: Pengaturan Rumus Lembur Security */}
             <Modal show={configModalOpen} onClose={() => setConfigModalOpen(false)} maxWidth="lg">
@@ -1005,6 +1059,196 @@ export default function SecurityPayrollIndex({
                         </PrimaryButton>
                     </div>
                 </form>
+            </Modal>
+
+            {/* Modal: Rincian & Preview Kalkulasi Security */}
+            <Modal show={detailModalOpen} onClose={() => setDetailModalOpen(false)} maxWidth="2xl">
+                {selectedEmployee && (() => {
+                    const emp = selectedEmployee;
+                    const s = summaries[emp.id] || {};
+                    const snapshot = s.calculation_snapshot || {};
+                    const reg = snapshot.regular_overtime || {};
+                    const off = snapshot.off_holiday_overtime || {};
+
+                    return (
+                        <div className="p-6 space-y-4 font-sans text-xs">
+                            {/* Header */}
+                            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold">
+                                        <ShieldCheck className="w-6 h-6" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-gray-900 text-sm">
+                                            Rincian & Preview Kalkulasi Payroll Security
+                                        </h3>
+                                        <p className="text-xs text-gray-500">
+                                            {emp.full_name} ({emp.employee_number}) • Periode {currentPeriod?.period_code}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setDetailModalOpen(false)}
+                                    className="text-gray-400 hover:text-gray-600"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            {/* Section 1: Attendance & Target Hours */}
+                            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-2">
+                                <span className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                                    <Clock className="w-4 h-4 text-blue-600" />
+                                    1. Target Jam Kerja vs Jam Aktual Kehadiran
+                                </span>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono text-slate-700">
+                                    <div className="bg-white p-2 rounded-lg border border-slate-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Hari Masuk</span>
+                                        <span className="font-bold text-blue-900 text-xs">{s.present_days || 0} Hari</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-slate-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Jam Aktual Hadir</span>
+                                        <span className="font-bold text-blue-900 text-xs">{s.attendance_hours || 0} Jam</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-slate-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Hari OFF / Absen</span>
+                                        <span className="font-bold text-slate-800 text-xs">{s.off_days || 0} OFF / {s.total_absence_days || 0} Absen</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-slate-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Target Jam Kerja</span>
+                                        <span className="font-bold text-emerald-700 text-xs">{s.target_hours || 0} Jam</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Section 2: Shortage & Carry-Forward */}
+                            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-2">
+                                <span className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                                    2. Kekurangan Jam Kerja & Kompensasi Lembur
+                                </span>
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px] font-mono text-slate-700">
+                                    <div className="bg-white p-2 rounded-lg border border-slate-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Kurang Bulan Ini</span>
+                                        <span className="font-bold text-amber-900">{s.current_shortage_hours || 0} Jam</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-slate-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Bulan Lalu (Carry)</span>
+                                        <span className="font-bold text-purple-900">{s.previous_shortage_hours || 0} Jam</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-slate-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Total Kekurangan</span>
+                                        <span className="font-bold text-rose-800">{s.total_shortage_hours || 0} Jam</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-slate-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Kompensasi Lembur</span>
+                                        <span className="font-bold text-blue-900">-{s.shortage_offset_hours || 0} Jam</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-slate-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Sisa Dibawa Lanjut</span>
+                                        <span className="font-bold text-slate-900">{s.remaining_shortage_hours || 0} Jam</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Section 3: Regular Overtime Breakdown */}
+                            <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3.5 space-y-2">
+                                <div className="flex items-center justify-between font-bold text-xs text-amber-950">
+                                    <span className="flex items-center gap-1.5">
+                                        <Shield className="w-4 h-4 text-amber-700" />
+                                        3. Lembur Hari Kerja Biasa (REGULAR)
+                                    </span>
+                                    <span className="text-amber-900 font-mono text-sm font-black">
+                                        {formatRupiah(s.regular_overtime_cost || 0)}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono text-amber-950">
+                                    <div className="bg-white p-2 rounded-lg border border-amber-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Hari / Jam Lembur</span>
+                                        <span>{s.regular_overtime_days || 0} Hari / {s.regular_overtime_hours || 0}j</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-amber-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Pot. Istirahat (1j/8j)</span>
+                                        <span className="text-rose-700">-{s.regular_break_deduction_hours || 0} Jam</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-amber-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Jam Bersih</span>
+                                        <span className="font-bold">{s.regular_net_overtime_hours || 0} Jam</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-amber-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Alokasi Jam 1 & Lanjut</span>
+                                        <span>J1: {s.regular_first_hours || 0}j | JL: {s.regular_subsequent_hours || 0}j</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Section 4: OFF / Holiday Overtime Breakdown */}
+                            <div className="bg-purple-50/60 border border-purple-200 rounded-xl p-3.5 space-y-2">
+                                <div className="flex items-center justify-between font-bold text-xs text-purple-950">
+                                    <span className="flex items-center gap-1.5">
+                                        <Calendar className="w-4 h-4 text-purple-700" />
+                                        4. Lembur Hari OFF / Libur (OFF_HOLIDAY)
+                                    </span>
+                                    <span className="text-purple-900 font-mono text-sm font-black">
+                                        {formatRupiah(s.off_holiday_overtime_cost || 0)}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] font-mono text-purple-950">
+                                    <div className="bg-white p-2 rounded-lg border border-purple-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Hari / Jam Lembur</span>
+                                        <span>{s.off_holiday_overtime_days || 0} Hari / {s.off_holiday_overtime_hours || 0}j</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-purple-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Lembur Bersih</span>
+                                        <span className="font-bold">{s.off_holiday_net_overtime_hours || 0} Jam</span>
+                                    </div>
+                                    <div className="bg-white p-2 rounded-lg border border-purple-200">
+                                        <span className="text-gray-500 block text-[10px] font-sans">Status Tarif</span>
+                                        {s.off_holiday_rate_confirmed ? (
+                                            <span className="text-emerald-700 font-bold">Terkonfirmasi</span>
+                                        ) : Number(s.off_holiday_overtime_hours || 0) > 0 ? (
+                                            <span className="text-amber-800 font-bold">Menunggu Kebijakan</span>
+                                        ) : (
+                                            <span className="text-gray-500">-</span>
+                                        )}
+                                    </div>
+                                </div>
+                                {!s.off_holiday_rate_confirmed && Number(s.off_holiday_overtime_hours || 0) > 0 && (
+                                    <div className="bg-amber-100/70 border border-amber-300 rounded-lg p-2.5 text-[11px] text-amber-900 flex items-start gap-2">
+                                        <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                                        <div>
+                                            <strong>Tarif Lembur OFF/Libur Belum Dikonfirmasi:</strong> Biaya belum dimasukkan ke slip gaji (Rp 0) untuk mencegah pencairan tanpa otorisasi.
+                                            {snapshot.off_holiday_overtime?.estimated_cost > 0 && (
+                                                <span className="block mt-0.5 text-amber-800">
+                                                    Estimasi acuan PP 35/2021: {formatRupiah(snapshot.off_holiday_overtime.estimated_cost)}.
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Section 5: Totals */}
+                            <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 space-y-2 font-mono">
+                                <div className="flex justify-between items-center text-xs font-sans font-bold text-emerald-950">
+                                    <span>Total Komponen Lembur (Masuk ke Slip Gaji):</span>
+                                    <span className="text-base font-extrabold text-emerald-900">{formatRupiah(s.total_overtime_cost || 0)}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs font-sans text-emerald-800 pt-1 border-t border-emerald-200">
+                                    <span>Total Upah Periode (Gaji Pokok + Lembur):</span>
+                                    <span className="font-bold">{formatRupiah(s.total_period_salary || 0)}</span>
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end pt-2 border-t border-gray-100">
+                                <SecondaryButton onClick={() => setDetailModalOpen(false)}>
+                                    Tutup
+                                </SecondaryButton>
+                            </div>
+                        </div>
+                    );
+                })()}
             </Modal>
         </AuthenticatedLayout>
     );

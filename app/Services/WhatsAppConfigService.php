@@ -81,8 +81,13 @@ class WhatsAppConfigService
             'last_session_checked_at' => $existingConfig['last_session_checked_at'] ?? null,
         ];
 
+        $endpoint = $data['endpoint'] ?? null;
+        if ($driver === 'openwa' && ! empty($endpoint)) {
+            $endpoint = \App\Services\WhatsApp\OpenWaClient::normalizeBaseUrl($endpoint);
+        }
+
         $setting->is_active = (bool) ($data['is_active'] ?? false);
-        $setting->endpoint = $data['endpoint'] ?? null;
+        $setting->endpoint = $endpoint;
         $setting->sender_identifier = $data['sender_identifier'] ?? ($data['session_id'] ?? null);
         $setting->config_json = $newConfig;
 
@@ -151,12 +156,70 @@ class WhatsAppConfigService
     }
 
     /**
-     * Test WhatsApp gateway connection by sending a benign verification ping message.
+     * Test gateway HTTP connectivity and authentication without sending any message.
+     * Verifies API endpoint reachability and credentials.
+     *
+     * @return array{success: bool, message: string, api_connected?: bool, session_status?: string, is_ready?: bool}
+     */
+    public function testGatewayConnection(): array
+    {
+        $setting = IntegrationSetting::forProvider('whatsapp');
+
+        try {
+            $gateway = $this->whatsAppManager->getActiveGateway();
+
+            if (method_exists($gateway, 'testGatewayConnectivity')) {
+                $result = $gateway->testGatewayConnectivity();
+            } else {
+                $isValid = $gateway->validateConfiguration();
+                $result = [
+                    'success' => $isValid,
+                    'message' => $isValid
+                        ? "Gateway WhatsApp ({$gateway->getName()}) siap digunakan."
+                        : "Konfigurasi gateway WhatsApp ({$gateway->getName()}) belum lengkap atau tidak valid.",
+                ];
+            }
+
+            $setting->last_tested_at = now();
+            $setting->last_test_status = $result['success'] ? 'success' : 'failed';
+            $setting->save();
+
+            return $result;
+        } catch (Throwable $e) {
+            $setting->last_tested_at = now();
+            $setting->last_test_status = 'failed';
+            $setting->save();
+
+            return [
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat menguji koneksi gateway: '.$e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Test WhatsApp gateway connection.
+     * If $testRecipient is provided, sends a benign test verification message.
+     * If $testRecipient is null/empty, checks gateway connectivity only.
+     *
+     * @return array{success: bool, message: string}
+     */
+    public function testConnection(?string $testRecipient = null): array
+    {
+        if (empty($testRecipient)) {
+            return $this->testGatewayConnection();
+        }
+
+        return $this->sendTestMessage($testRecipient);
+    }
+
+    /**
+     * Send a benign verification ping message to test end-to-end delivery to a recipient.
      * Guaranteed zero payroll data sent.
      *
      * @return array{success: bool, message: string}
      */
-    public function testConnection(string $testRecipient): array
+    public function sendTestMessage(string $testRecipient): array
     {
         if (! PhoneNumberNormalizer::isValid($testRecipient)) {
             return [
@@ -171,6 +234,28 @@ class WhatsAppConfigService
         try {
             $gateway = $this->whatsAppManager->getActiveGateway();
 
+            // Validate gateway configuration
+            if (! $gateway->validateConfiguration()) {
+                return [
+                    'success' => false,
+                    'message' => 'Konfigurasi gateway WhatsApp belum lengkap atau tidak valid.',
+                ];
+            }
+
+            // Ensure session is ready before attempting message delivery
+            if (method_exists($gateway, 'checkSessionStatus')) {
+                $sessionCheck = $gateway->checkSessionStatus();
+                if (! ($sessionCheck['is_ready'] ?? false)) {
+                    $status = $sessionCheck['session_status'] ?? 'NOT_READY';
+
+                    return [
+                        'success' => false,
+                        'message' => "Sesi WhatsApp belum siap untuk pengiriman pesan (Status: {$status}). {$sessionCheck['message']}",
+                        'session_status' => $status,
+                    ];
+                }
+            }
+
             $pingMessage = "Halo,\n\nIni adalah pesan uji coba koneksi gateway WhatsApp dari Sistem Informasi Penggajian Personalia CV. Bina Pustaka.\nKoneksi berhasil diverifikasi pada ".now()->format('d/m/Y H:i:s')." WIB.\n\nCatatan: Pesan uji coba ini tidak memuat data gaji, nominal, atau rincian finansial karyawan apa pun.\n\nSalam,\nBagian Personalia / IT Support";
 
             $result = $gateway->sendTextMessage($normalizedPhone, $pingMessage);
@@ -183,6 +268,8 @@ class WhatsAppConfigService
                 return [
                     'success' => true,
                     'message' => "Koneksi gateway WhatsApp ({$gateway->getName()}) berhasil! Pesan uji coba telah dikirim ke {$normalizedPhone} tanpa data gaji.",
+                    'message_id' => $result->providerMessageId,
+                    'status' => $result->status->value,
                 ];
             }
 
